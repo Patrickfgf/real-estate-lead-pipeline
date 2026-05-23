@@ -1,0 +1,60 @@
+==============================================================
+E-MAIL 1 — Wimoveis (solicitação de integração via webhook)
+==============================================================
+
+Para: [endereço do suporte/integrações da Wimoveis — ex.: suporte@wimoveis.com.br ou contato comercial da conta]
+Assunto: Solicitação de integração via webhook de leads — Eldorado Imobiliária
+
+--------------------------------------------------------------
+
+Prezados,
+
+Meu nome é João Victor Rodrigues e atuo na Eldorado Imobiliária,
+anunciante ativo na Wimoveis (conta: [INFORMAR LOGIN/ID DO
+ANUNCIANTE NA PLATAFORMA]).
+
+Estamos finalizando, com o nosso time técnico, uma integração
+interna para receber em tempo real os leads gerados pelos nossos
+anúncios na Wimoveis e encaminhá-los automaticamente aos corretores
+responsáveis. Para concluir esse trabalho, gostaríamos do apoio de
+vocês com a habilitação do envio dos leads via webhook (HTTP POST)
+para um endpoint nosso.
+
+Para que possamos avançar, peço, por gentileza, as seguintes
+informações:
+
+  1. Confirmação de que o envio de leads por webhook está disponível
+     para a nossa conta e, em caso positivo, o procedimento para
+     cadastrar a URL de destino.
+
+  2. Documentação técnica do payload enviado (campos, formato,
+     content-type, exemplo de requisição) e da política de reenvio
+     em caso de falha (timeouts, retries, códigos HTTP esperados).
+
+  3. Mecanismo de autenticação suportado para o webhook (ex.: header
+     com token compartilhado, assinatura HMAC, IP allowlist) para
+     que possamos validar a origem das requisições.
+
+  4. Disponibilidade de ambiente de testes ou de envio de um lead
+     de homologação assim que a URL for cadastrada, para que
+     possamos validar o fluxo ponta a ponta antes de entrar em
+     produção.
+
+  5. Eventuais limites de volume, janelas de envio ou outras
+     restrições operacionais que devamos considerar.
+
+Assim que tivermos essas informações, retorno com a URL definitiva
+do webhook e o token de validação que devem ser cadastrados do lado
+de vocês.
+
+Fico à disposição para qualquer informação adicional, inclusive
+para uma breve reunião técnica caso seja mais prático.
+
+Atenciosamente,
+
+João Victor Rodrigues
+Eldorado Imobiliária
+E-mail: [SEU E-MAIL PROFISSIONAL]
+Telefone / WhatsApp: [SEU TELEFONE COM DDD]
+CNPJ: [CNPJ DA ELDORADO IMOBILIÁRIA]
+Cidade: Brasília / DF
