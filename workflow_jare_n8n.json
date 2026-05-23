@@ -1,0 +1,391 @@
+{
+  "name": "Jare - Leads para Trello",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wimoveis-lead",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-webhook-wimoveis",
+      "name": "Webhook Wimoveis",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 200],
+      "webhookId": "wimoveis-lead-jare"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "OK",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "node-respond-wimoveis",
+      "name": "Responder 200 OK (Wimoveis)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [460, 200]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "node-schedule-dfimoveis",
+      "name": "Schedule DFImoveis (5min)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [240, 460]
+    },
+    {
+      "parameters": {
+        "url": "https://api.dfimoveis.com.br/v1/leads",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "since_minutes",
+              "value": "10"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "node-http-dfimoveis",
+      "name": "GET DFImoveis API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 460],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_DFIMOVEIS_CRED_ID",
+          "name": "DFImoveis API Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "leads",
+        "options": {}
+      },
+      "id": "node-split-dfimoveis",
+      "name": "Separar leads",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [680, 460]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f-source",
+              "name": "source",
+              "value": "wimoveis",
+              "type": "string"
+            },
+            {
+              "id": "f-external",
+              "name": "externalId",
+              "value": "={{ $json.body.ExternalId || $json.body.LeadId }}",
+              "type": "string"
+            },
+            {
+              "id": "f-name",
+              "name": "leadName",
+              "value": "={{ $json.body.LeadName }}",
+              "type": "string"
+            },
+            {
+              "id": "f-email",
+              "name": "leadEmail",
+              "value": "={{ $json.body.LeadEmail }}",
+              "type": "string"
+            },
+            {
+              "id": "f-phone",
+              "name": "leadPhone",
+              "value": "={{ $json.body.LeadTelephone }}",
+              "type": "string"
+            },
+            {
+              "id": "f-message",
+              "name": "message",
+              "value": "={{ $json.body.Message }}",
+              "type": "string"
+            },
+            {
+              "id": "f-imovel",
+              "name": "imovelRef",
+              "value": "={{ $json.body.PropertyExternalId || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "f-broker",
+              "name": "brokerEmail",
+              "value": "={{ $json.body.BrokerEmail || '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-normalize-wimoveis",
+      "name": "Normalizar (Wimoveis)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 320]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f-source",
+              "name": "source",
+              "value": "dfimoveis",
+              "type": "string"
+            },
+            {
+              "id": "f-external",
+              "name": "externalId",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "f-name",
+              "name": "leadName",
+              "value": "={{ $json.nome }}",
+              "type": "string"
+            },
+            {
+              "id": "f-email",
+              "name": "leadEmail",
+              "value": "={{ $json.email }}",
+              "type": "string"
+            },
+            {
+              "id": "f-phone",
+              "name": "leadPhone",
+              "value": "={{ $json.telefone }}",
+              "type": "string"
+            },
+            {
+              "id": "f-message",
+              "name": "message",
+              "value": "={{ $json.mensagem }}",
+              "type": "string"
+            },
+            {
+              "id": "f-imovel",
+              "name": "imovelRef",
+              "value": "={{ $json.imovel_id || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "f-broker",
+              "name": "brokerEmail",
+              "value": "={{ $json.corretor_email || '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-normalize-dfimoveis",
+      "name": "Normalizar (DFImoveis)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [900, 460]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "mergeByPosition",
+        "options": {}
+      },
+      "id": "node-merge",
+      "name": "Unificar fontes",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1120, 390]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.trello.com/1/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ 'jare-ext:' + $json.externalId }}"
+            },
+            {
+              "name": "modelTypes",
+              "value": "cards"
+            },
+            {
+              "name": "card_fields",
+              "value": "name,desc,url"
+            },
+            {
+              "name": "cards_limit",
+              "value": "5"
+            },
+            {
+              "name": "idBoards",
+              "value": "={{ $vars.TRELLO_BOARD_ID }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-trello-search",
+      "name": "Buscar duplicado no Trello",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 390],
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "REPLACE_TRELLO_QUERY_AUTH_ID",
+          "name": "Trello Key+Token (query)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c-dup",
+              "leftValue": "={{ $json.cards.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-if-dup",
+      "name": "Eh novo?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1560, 390]
+    },
+    {
+      "parameters": {
+        "resource": "card",
+        "operation": "create",
+        "listId": "={{ $vars.TRELLO_LIST_NOVOS_ID }}",
+        "name": "=[{{ $('Unificar fontes').item.json.source.toUpperCase() }}] {{ $('Unificar fontes').item.json.leadName }} - {{ $('Unificar fontes').item.json.imovelRef }}",
+        "additionalFields": {
+          "description": "=**Fonte:** {{ $('Unificar fontes').item.json.source }}\n**Nome:** {{ $('Unificar fontes').item.json.leadName }}\n**Telefone:** {{ $('Unificar fontes').item.json.leadPhone }}\n**Email:** {{ $('Unificar fontes').item.json.leadEmail }}\n**Imovel ref.:** {{ $('Unificar fontes').item.json.imovelRef }}\n**Corretor:** {{ $('Unificar fontes').item.json.brokerEmail }}\n\n**Mensagem:**\n{{ $('Unificar fontes').item.json.message }}\n\n---\njare-ext:{{ $('Unificar fontes').item.json.externalId }}"
+        }
+      },
+      "id": "node-trello-create",
+      "name": "Criar card no Trello",
+      "type": "n8n-nodes-base.trello",
+      "typeVersion": 1,
+      "position": [1780, 320],
+      "credentials": {
+        "trelloApi": {
+          "id": "REPLACE_TRELLO_CRED_ID",
+          "name": "Trello App Key + Token"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "node-noop-dup",
+      "name": "Skip (duplicado)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1780, 480]
+    }
+  ],
+  "connections": {
+    "Webhook Wimoveis": {
+      "main": [
+        [
+          { "node": "Responder 200 OK (Wimoveis)", "type": "main", "index": 0 },
+          { "node": "Normalizar (Wimoveis)", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Normalizar (Wimoveis)": {
+      "main": [
+        [{ "node": "Unificar fontes", "type": "main", "index": 0 }]
+      ]
+    },
+    "Schedule DFImoveis (5min)": {
+      "main": [
+        [{ "node": "GET DFImoveis API", "type": "main", "index": 0 }]
+      ]
+    },
+    "GET DFImoveis API": {
+      "main": [
+        [{ "node": "Separar leads", "type": "main", "index": 0 }]
+      ]
+    },
+    "Separar leads": {
+      "main": [
+        [{ "node": "Normalizar (DFImoveis)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Normalizar (DFImoveis)": {
+      "main": [
+        [{ "node": "Unificar fontes", "type": "main", "index": 1 }]
+      ]
+    },
+    "Unificar fontes": {
+      "main": [
+        [{ "node": "Buscar duplicado no Trello", "type": "main", "index": 0 }]
+      ]
+    },
+    "Buscar duplicado no Trello": {
+      "main": [
+        [{ "node": "Eh novo?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Eh novo?": {
+      "main": [
+        [{ "node": "Criar card no Trello", "type": "main", "index": 0 }],
+        [{ "node": "Skip (duplicado)", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "tags": [
+    { "name": "jare" },
+    { "name": "leads" }
+  ]
+}
