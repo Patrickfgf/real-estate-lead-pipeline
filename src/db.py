@@ -35,6 +35,18 @@ CREATE TABLE IF NOT EXISTS leads_raw (
 );
 """
 
+# "Caixa de revisão" (dead-letter): qualquer POST que NÃO passe na validação é
+# guardado aqui em vez de se perder. Garante que nenhum lead suma só porque veio
+# num formato inesperado — a gente inspeciona, conserta o parsing e reprocessa.
+_SCHEMA_DEAD_LETTER = """
+CREATE TABLE IF NOT EXISTS leads_dead_letter (
+    received_at  TIMESTAMPTZ,
+    source       VARCHAR,
+    error        VARCHAR,
+    raw_payload  VARCHAR
+);
+"""
+
 # Colunas devolvidas para montar o card do Trello (Fase 4).
 _LEAD_COLS = [
     "source",
@@ -58,6 +70,7 @@ def get_connection() -> duckdb.DuckDBPyConnection:
         Path(settings.duckdb_path).parent.mkdir(parents=True, exist_ok=True)
         _con = duckdb.connect(settings.duckdb_path)
         _con.execute(_SCHEMA)
+        _con.execute(_SCHEMA_DEAD_LETTER)
     return _con
 
 
@@ -121,3 +134,55 @@ def set_trello_card_id(source: str, external_id: str, card_id: str) -> None:
             "UPDATE leads_raw SET trello_card_id = ? WHERE source = ? AND external_id = ?;",
             [card_id, source, external_id],
         )
+
+
+def insert_dead_letter(source: str, error: str, raw_payload: str, received_at) -> None:
+    """Guarda na caixa de revisão um POST que não pôde ser processado.
+
+    Rede de segurança: chamado quando o payload não parseia/valida. Preserva o
+    conteúdo cru para inspeção e reprocessamento — nenhum lead se perde.
+    """
+    con = get_connection()
+    with _lock:
+        con.execute(
+            "INSERT INTO leads_dead_letter (received_at, source, error, raw_payload) VALUES (?, ?, ?, ?);",
+            [received_at, source, error, raw_payload],
+        )
+
+
+def fetch_dead_letter(limit: int = 20) -> list[dict]:
+    """Últimas entradas da caixa de revisão (mais recentes primeiro)."""
+    con = get_connection()
+    rows = con.execute(
+        "SELECT received_at, source, error, raw_payload FROM leads_dead_letter "
+        "ORDER BY received_at DESC LIMIT ?;",
+        [limit],
+    ).fetchall()
+    cols = ["received_at", "source", "error", "raw_payload"]
+    return [dict(zip(cols, row)) for row in rows]
+
+
+# ----------------------------------------------------------------------------
+# CLI de inspeção (operação): python -m src.db dead-letter
+# ----------------------------------------------------------------------------
+if __name__ == "__main__":
+    import sys
+
+    for _stream in (sys.stdout, sys.stderr):  # console Windows (cp1252) tolerante
+        try:
+            _stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+    if (sys.argv[1] if len(sys.argv) > 1 else "") != "dead-letter":
+        print("uso: python -m src.db dead-letter", file=sys.stderr)
+        sys.exit(1)
+
+    entradas = fetch_dead_letter()
+    if not entradas:
+        print("Caixa de revisão vazia — nenhum lead pendente de conserto. ✅")
+    else:
+        print(f"{len(entradas)} entrada(s) na caixa de revisão (mais recentes primeiro):\n")
+        for e in entradas:
+            print(f"- {e['received_at']} [{e['source']}] erro: {e['error']}")
+            print(f"    payload: {e['raw_payload'][:200]}")
