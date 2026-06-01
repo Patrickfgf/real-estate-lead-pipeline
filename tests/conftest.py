@@ -11,6 +11,7 @@ import tempfile
 _TMP_DIR = tempfile.mkdtemp(prefix="jare_test_")
 os.environ["DUCKDB_PATH"] = os.path.join(_TMP_DIR, "test.duckdb")
 os.environ["WIMOVEIS_WEBHOOK_SECRET"] = "segredo-de-teste"
+os.environ["DFIMOVEIS_WEBHOOK_SECRET"] = "segredo-de-teste"
 
 # Isola os testes de serviços externos: SEM credenciais de Trello, a ingestão
 # não dispara carga real (o webhook só empurra pro Trello se houver api_key +
@@ -20,3 +21,4 @@ os.environ["TRELLO_API_KEY"] = ""
 os.environ["TRELLO_API_TOKEN"] = ""
 os.environ["TRELLO_LIST_ID"] = ""
 os.environ["TRELLO_LABEL_WIMOVEIS"] = ""
+os.environ["TRELLO_LABEL_DFIMOVEIS"] = ""
