@@ -18,13 +18,16 @@ DFImóveis (polling) ─┘
 ## Status
 
 - [x] **Fase 0** — esqueleto do projeto
-- [x] **Fase 1** — ingestão Wimóveis (webhook FastAPI → DuckDB com dedup) + testes
+- [x] **Fase 1** — ingestão Wimóveis (callback CONTACTO da Navent → DuckDB com dedup) + testes
+- [x] **Fase 4** — carga no Trello (1 card por lead, idempotente)
 - [ ] **Fase 1b** — ingestão DFImóveis (polling com token)
 - [ ] **Fase 2** — limpeza / dedup / enriquecimento
 - [ ] **Fase 3** — lead scoring
-- [ ] **Fase 4** — carga no Trello
 - [ ] **Fase 5** — dashboard Streamlit
 - [ ] **Fase 6** — orquestração / deploy
+
+> A Fase 4 foi antecipada para fechar uma fatia vertical: lead entra → card sai
+> no Trello. As Fases 2-3 (limpeza/scoring) entram depois, antes do card.
 
 ## Como rodar (local)
 
@@ -53,6 +56,28 @@ Invoke-RestMethod -Method Post `
 
 Resposta esperada: `{ "status": "received", "external_id": "...", "duplicate": false }`.
 Reenviar o mesmo `ExternalId` devolve `"duplicate": true` (dedup funcionando).
+
+## Configurar e testar o Trello
+
+1. Pegue sua **key** e **token** em https://trello.com/app-key e preencha
+   `TRELLO_API_KEY` / `TRELLO_API_TOKEN` no `.env`.
+2. Descubra o ID da lista onde os leads devem entrar:
+
+   ```bash
+   python -m src.trello check    # valida as credenciais
+   python -m src.trello lists    # lista boards e listas com os IDs
+   ```
+
+   Copie o `TRELLO_LIST_ID` da lista desejada (ex.: "Novos leads") para o `.env`.
+3. Com o servidor recebendo leads, a carga é automática. Para enviar manualmente
+   os leads que ainda não viraram card:
+
+   ```bash
+   python -m src.trello push
+   ```
+
+A carga é **idempotente**: cada lead vira no máximo um card (vínculo em
+`leads_raw.trello_card_id` + marcador `jare-ext:` na descrição do card).
 
 ## Testes
 
