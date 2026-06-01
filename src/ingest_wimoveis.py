@@ -5,6 +5,7 @@ payload (Pydantic) → normaliza para o lead canônico → grava no DuckDB
 (dedup por idEvento).
 """
 import json
+import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -12,20 +13,26 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 
 from src.config import settings
-from src.db import insert_lead
+from src.db import insert_dead_letter, insert_lead
 from src.models import Lead, WimoveisContato
 from src.trello import push_pending_leads
 
 router = APIRouter(prefix="/webhook", tags=["ingestão"])
 _TZ = ZoneInfo(settings.tz)
+logger = logging.getLogger("jare.ingest")
 
 
 def _check_secret(header_token: str | None, query_token: str | None) -> None:
     """Valida o segredo compartilhado. Aceita via header ou query param.
 
-    NOTA: confirmar com a doc oficial da Navent se/como o callback é autenticado
-    (assinatura, token na URL etc.) e ajustar. Sem segredo configurado no .env,
-    a validação é pulada (modo dev).
+    Como a Navent autentica (doc open.navent.com/guias/callbacks): ao cadastrar
+    o callback (PUT /v1/configuracion/callbacks ou via suporte), NÓS definimos
+    `authorizationHeaderKey` (nome do header; default "Authorization") e
+    `authorizationHeaderValue` (o segredo). A Navent envia esse header em todo
+    POST. Para casar com a checagem abaixo SEM mudar código, cadastrar com
+    authorizationHeaderKey="x-webhook-token" e authorizationHeaderValue igual ao
+    WIMOVEIS_WEBHOOK_SECRET. (Se preferir o header padrão "Authorization", ler
+    `authorization` aqui.) Sem segredo no .env, a validação é pulada (modo dev).
     """
     secret = settings.wimoveis_webhook_secret
     if not secret:
@@ -56,11 +63,21 @@ async def receber_lead_wimoveis(
 ):
     _check_secret(x_webhook_token, token)
 
-    payload = await request.json()
+    # Lê o corpo CRU primeiro: se o JSON nem parsear, ainda preservamos o texto.
+    received_at = datetime.now(_TZ)
+    raw_text = (await request.body()).decode("utf-8", errors="replace")
+
     try:
+        payload = json.loads(raw_text)
         contato = WimoveisContato.model_validate(payload)
-    except Exception as exc:  # validação Pydantic
-        raise HTTPException(status_code=422, detail=f"Payload inválido: {exc}")
+    except Exception as exc:  # JSON malformado OU validação Pydantic
+        # Rede de segurança: guarda o cru na caixa de revisão antes de recusar.
+        # Nenhum lead se perde, mesmo vindo num formato inesperado.
+        await run_in_threadpool(insert_dead_letter, "wimoveis", str(exc), raw_text, received_at)
+        logger.warning("Lead Wimóveis recusado e guardado para revisão: %s", exc)
+        raise HTTPException(
+            status_code=422, detail=f"Payload inválido (guardado para revisão): {exc}"
+        )
 
     lead = Lead(
         external_id=contato.id_evento,
@@ -75,18 +92,22 @@ async def receber_lead_wimoveis(
         cpf=contato.cpf,
         lead_date=_parse_data_registro(contato.data_registro),
         raw_payload=json.dumps(payload, ensure_ascii=False),
-        received_at=datetime.now(_TZ),
+        received_at=received_at,
     )
 
     inserted = await run_in_threadpool(insert_lead, lead)
+    logger.info(
+        "Lead %s/%s %s", lead.source, lead.external_id,
+        "gravado (novo)" if inserted else "ignorado (duplicado)",
+    )
 
     # Carga no Trello: best-effort e só quando há credenciais. Falha aqui não
     # derruba o webhook — o lead já está no banco e a próxima carga o reenvia.
     if inserted and settings.trello_api_key and settings.trello_list_id:
         try:
             await run_in_threadpool(push_pending_leads)
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception:  # noqa: BLE001 — não derruba o webhook; fica pendente
+            logger.exception("Falha na carga do Trello para %s", lead.external_id)
 
     return {
         "status": "received",

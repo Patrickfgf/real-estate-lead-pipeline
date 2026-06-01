@@ -82,3 +82,40 @@ def test_payload_invalido_retorna_422():
         "/webhook/wimoveis", params={"token": SECRET}, json={"foo": "bar"}
     )
     assert resp.status_code == 422
+
+
+def test_payload_invalido_e_guardado_na_caixa_de_revisao():
+    """Blindagem: payload recusado não some — vai para a dead-letter."""
+    marcador = "marcador-dead-letter-xyz"
+    resp = client.post(
+        "/webhook/wimoveis",
+        params={"token": SECRET},
+        json={"sem_campos_obrigatorios": marcador},
+    )
+    assert resp.status_code == 422
+
+    row = get_connection().execute(
+        "SELECT source, error, raw_payload FROM leads_dead_letter WHERE raw_payload LIKE ?",
+        [f"%{marcador}%"],
+    ).fetchone()
+    assert row is not None
+    assert row[0] == "wimoveis"
+    assert row[1]  # mensagem de erro preservada
+    assert marcador in row[2]  # conteúdo cru preservado para reprocessar
+
+
+def test_corpo_nao_json_nao_derruba_e_e_guardado():
+    """Corpo que nem é JSON (scanner/lixo) não quebra o webhook — vai para revisão."""
+    marcador = "isto-nao-e-json-zzz"
+    resp = client.post(
+        "/webhook/wimoveis",
+        params={"token": SECRET},
+        content=marcador.encode("utf-8"),
+        headers={"content-type": "application/json"},
+    )
+    assert resp.status_code == 422
+    row = get_connection().execute(
+        "SELECT raw_payload FROM leads_dead_letter WHERE raw_payload LIKE ?",
+        [f"%{marcador}%"],
+    ).fetchone()
+    assert row is not None and marcador in row[0]
