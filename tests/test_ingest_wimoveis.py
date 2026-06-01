@@ -1,9 +1,10 @@
-"""Testes da ingestão do Wimóveis (rota do webhook + dedup)."""
+"""Testes da ingestão do Wimóveis (callback CONTACTO da Navent + dedup)."""
 import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from src.db import get_connection
 from src.main import app
 
 client = TestClient(app)
@@ -29,12 +30,12 @@ def test_recebe_lead_valido():
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "received"
-    assert body["external_id"] == SAMPLE["ExternalId"]
+    assert body["external_id"] == SAMPLE["idEvento"]
     assert body["duplicate"] is False
 
 
 def test_aceita_segredo_via_header():
-    lead = {**SAMPLE, "ExternalId": "WIM-HEADER-TEST"}
+    lead = {**SAMPLE, "idEvento": "evt-header-test"}
     resp = client.post(
         "/webhook/wimoveis", headers={"x-webhook-token": SECRET}, json=lead
     )
@@ -42,15 +43,41 @@ def test_aceita_segredo_via_header():
     assert resp.json()["duplicate"] is False
 
 
-def test_dedup_mesmo_external_id():
-    lead = {**SAMPLE, "ExternalId": "WIM-DEDUP-TEST"}
+def test_dedup_mesmo_id_evento():
+    lead = {**SAMPLE, "idEvento": "evt-dedup-test"}
     r1 = client.post("/webhook/wimoveis", params={"token": SECRET}, json=lead)
     r2 = client.post("/webhook/wimoveis", params={"token": SECRET}, json=lead)
     assert r1.json()["duplicate"] is False
     assert r2.json()["duplicate"] is True
 
 
+def test_mapeamento_dos_campos_no_banco():
+    """Garante que o payload CONTACTO foi normalizado e gravado corretamente."""
+    lead = {**SAMPLE, "idEvento": "evt-map-test"}
+    client.post("/webhook/wimoveis", params={"token": SECRET}, json=lead)
+
+    row = get_connection().execute(
+        """
+        SELECT name, email, phone, message, listing_ref, advertiser_code,
+               agency_code, lead_date
+        FROM leads_raw WHERE source = 'wimoveis' AND external_id = ?
+        """,
+        ["evt-map-test"],
+    ).fetchone()
+
+    assert row is not None
+    name, email, phone, message, listing_ref, advertiser, agency, lead_date = row
+    assert name == SAMPLE["nome"]
+    assert email == SAMPLE["email"]
+    assert phone == SAMPLE["telefone"]
+    assert listing_ref == SAMPLE["referencia"]
+    assert advertiser == SAMPLE["codigoDoAnunciante"]
+    assert agency == SAMPLE["codigoImobiliaria"]
+    assert lead_date is not None and lead_date.tzinfo is not None  # dataRegistro parseado com fuso
+
+
 def test_payload_invalido_retorna_422():
+    # falta idEvento e nome (campos obrigatórios)
     resp = client.post(
         "/webhook/wimoveis", params={"token": SECRET}, json={"foo": "bar"}
     )
