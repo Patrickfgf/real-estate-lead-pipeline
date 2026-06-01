@@ -33,16 +33,15 @@ class Settings:
     # URL pública do NOSSO webhook (túnel cloudflared ou domínio do VPS), SEM barra final.
     webhook_public_url: str = os.getenv("WEBHOOK_PUBLIC_URL", "")
 
-    # DFImóveis (API oficial — polling)
-    dfimoveis_api_url: str = os.getenv("DFIMOVEIS_API_URL", "")
-    dfimoveis_api_token: str = os.getenv("DFIMOVEIS_API_TOKEN", "")
-    dfimoveis_poll_interval: int = int(os.getenv("DFIMOVEIS_POLL_INTERVAL", "300"))
+    # DFImóveis (webhook oficial — padrão VrSync, recebe POST)
+    dfimoveis_webhook_secret: str = os.getenv("DFIMOVEIS_WEBHOOK_SECRET", "")
 
     # Trello
     trello_api_key: str = os.getenv("TRELLO_API_KEY", "")
     trello_api_token: str = os.getenv("TRELLO_API_TOKEN", "")
     trello_list_id: str = os.getenv("TRELLO_LIST_ID", "")
     trello_label_wimoveis: str = os.getenv("TRELLO_LABEL_WIMOVEIS", "")
+    trello_label_dfimoveis: str = os.getenv("TRELLO_LABEL_DFIMOVEIS", "")
 
 
 settings = Settings()

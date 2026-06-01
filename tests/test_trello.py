@@ -12,7 +12,7 @@ def test_create_card_envia_idlabels_na_query(monkeypatch):
     """A etiqueta de origem deve ir em `params` (query), não no corpo —
     senão o Trello ignora e o card sai sem etiqueta."""
     fake = SimpleNamespace(
-        trello_list_id="LIST", trello_label_wimoveis="LBL",
+        trello_list_id="LIST", trello_label_wimoveis="LBL", trello_label_dfimoveis="LBL2",
         trello_api_key="K", trello_api_token="T",
     )
     monkeypatch.setattr(trello, "settings", fake)
@@ -83,6 +83,17 @@ def test_card_desc_tem_marcador_de_rastreio():
     }
     desc = trello._card_desc(lead)
     assert "jare-ext:wimoveis:abc-123" in desc
+
+
+def test_card_desc_mostra_portal_de_origem():
+    """O card deve indicar o portal certo (Wimóveis vs DFImóveis)."""
+    base = {
+        "external_id": "1", "name": "F", "email": None, "phone": None,
+        "message": None, "listing_ref": None, "advertiser_code": None,
+        "agency_code": None, "lead_date": None, "received_at": None,
+    }
+    assert "Lead Wimóveis" in trello._card_desc({**base, "source": "wimoveis"})
+    assert "Lead DFImóveis" in trello._card_desc({**base, "source": "dfimoveis"})
 
 
 def test_push_pending_cria_e_marca_idempotente(monkeypatch):

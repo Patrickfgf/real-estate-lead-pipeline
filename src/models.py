@@ -34,6 +34,40 @@ class WimoveisContato(BaseModel):
     cpf: str | None = None
 
 
+class VrSyncLead(BaseModel):
+    """Lead do webhook VrSync (GrupoZAP/OLX) — padrão aceito pela DFImóveis.
+
+    A DFImóveis faz POST deste payload na nossa URL. Só `originLeadId` e `name`
+    são obrigatórios; o resto é opcional. `extra="allow"` preserva campos novos.
+    Doc: https://developers.grupozap.com/webhooks/integration_leads.html
+    """
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    origin_lead_id: str = Field(alias="originLeadId")
+    lead_origin: str | None = Field(default=None, alias="leadOrigin")
+    timestamp: str | None = None
+    origin_listing_id: str | None = Field(default=None, alias="originListingId")
+    client_listing_id: str | None = Field(default=None, alias="clientListingId")
+    name: str
+    email: str | None = None
+    ddd: str | None = None
+    phone: str | None = None
+    phone_number: str | None = Field(default=None, alias="phoneNumber")
+    message: str | None = None
+    temperature: str | None = None  # Baixa/Média/Alta — útil na Fase 3 (lead scoring)
+    transaction_type: str | None = Field(default=None, alias="transactionType")
+
+    @property
+    def telefone_completo(self) -> str | None:
+        """phoneNumber se houver; senão junta ddd + phone."""
+        if self.phone_number:
+            return self.phone_number
+        if self.ddd and self.phone:
+            return f"{self.ddd}{self.phone}"
+        return self.phone or None
+
+
 class Lead(BaseModel):
     """Lead canônico — uma linha da tabela `leads_raw`.
 
