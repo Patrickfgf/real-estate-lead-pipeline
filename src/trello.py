@@ -97,7 +97,7 @@ def _cli_check() -> None:
     resp = requests.get(f"{_TRELLO_API}/members/me", params=_auth(), timeout=_TIMEOUT)
     resp.raise_for_status()
     me = resp.json()
-    print(f"OK — autenticado como @{me.get('username')} ({me.get('fullName')})")
+    print(f"OK - autenticado como @{me.get('username')} ({me.get('fullName')})")
 
 
 def _cli_lists() -> None:
@@ -108,7 +108,7 @@ def _cli_lists() -> None:
     )
     boards.raise_for_status()
     for board in boards.json():
-        print(f"\n📋 Board: {board['name']}  (id={board['id']})")
+        print(f"\nBoard: {board['name']}  (id={board['id']})")
         lists = requests.get(
             f"{_TRELLO_API}/boards/{board['id']}/lists",
             params={**_auth(), "fields": "name"},
@@ -116,7 +116,7 @@ def _cli_lists() -> None:
         )
         lists.raise_for_status()
         for lst in lists.json():
-            print(f"   • {lst['name']:<24} TRELLO_LIST_ID={lst['id']}")
+            print(f"   - {lst['name']:<24} TRELLO_LIST_ID={lst['id']}")
 
 
 def _cli_push() -> None:
@@ -124,6 +124,14 @@ def _cli_push() -> None:
 
 
 if __name__ == "__main__":
+    # No console do Windows (cp1252) caracteres fora do mapa quebram o print;
+    # 'replace' troca por '?' em vez de derrubar o comando.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
     comandos = {"check": _cli_check, "lists": _cli_lists, "push": _cli_push}
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     if cmd not in comandos:
