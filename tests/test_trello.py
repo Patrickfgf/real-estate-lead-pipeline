@@ -1,10 +1,47 @@
 """Testes da carga no Trello (Fase 4) — sem tocar na API real (mock)."""
 from datetime import datetime
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import src.trello as trello
 from src.db import get_connection, insert_lead
 from src.models import Lead
+
+
+def test_create_card_envia_idlabels_na_query(monkeypatch):
+    """A etiqueta de origem deve ir em `params` (query), não no corpo —
+    senão o Trello ignora e o card sai sem etiqueta."""
+    fake = SimpleNamespace(
+        trello_list_id="LIST", trello_label_wimoveis="LBL",
+        trello_api_key="K", trello_api_token="T",
+    )
+    monkeypatch.setattr(trello, "settings", fake)
+
+    capturado = {}
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"id": "card1"}
+
+    def _fake_post(url, params=None, data=None, timeout=None):
+        capturado["params"] = params
+        capturado["data"] = data
+        return _Resp()
+
+    monkeypatch.setattr(trello.requests, "post", _fake_post)
+
+    lead = {
+        "source": "wimoveis", "external_id": "x", "name": "N", "email": None,
+        "phone": None, "message": None, "listing_ref": None, "advertiser_code": None,
+        "agency_code": None, "lead_date": None, "received_at": None,
+    }
+    assert trello.create_card(lead) == "card1"
+    assert capturado["params"]["idLabels"] == "LBL"
+    assert capturado["params"]["idList"] == "LIST"
+    assert "name" in capturado["data"]
 
 
 def _make_lead(ext: str) -> Lead:
