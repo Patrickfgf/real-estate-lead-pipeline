@@ -14,6 +14,7 @@ from fastapi.concurrency import run_in_threadpool
 from src.config import settings
 from src.db import insert_lead
 from src.models import Lead, WimoveisContato
+from src.trello import push_pending_leads
 
 router = APIRouter(prefix="/webhook", tags=["ingestão"])
 _TZ = ZoneInfo(settings.tz)
@@ -78,6 +79,15 @@ async def receber_lead_wimoveis(
     )
 
     inserted = await run_in_threadpool(insert_lead, lead)
+
+    # Carga no Trello: best-effort e só quando há credenciais. Falha aqui não
+    # derruba o webhook — o lead já está no banco e a próxima carga o reenvia.
+    if inserted and settings.trello_api_key and settings.trello_list_id:
+        try:
+            await run_in_threadpool(push_pending_leads)
+        except Exception:  # noqa: BLE001
+            pass
+
     return {
         "status": "received",
         "external_id": lead.external_id,

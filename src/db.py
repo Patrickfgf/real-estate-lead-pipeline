@@ -30,9 +30,25 @@ CREATE TABLE IF NOT EXISTS leads_raw (
     lead_date       TIMESTAMPTZ,
     raw_payload     VARCHAR,
     received_at     TIMESTAMPTZ,
+    trello_card_id  VARCHAR,
     PRIMARY KEY (source, external_id)
 );
 """
+
+# Colunas devolvidas para montar o card do Trello (Fase 4).
+_LEAD_COLS = [
+    "source",
+    "external_id",
+    "name",
+    "email",
+    "phone",
+    "message",
+    "listing_ref",
+    "advertiser_code",
+    "agency_code",
+    "lead_date",
+    "received_at",
+]
 
 
 def get_connection() -> duckdb.DuckDBPyConnection:
@@ -79,3 +95,29 @@ def insert_lead(lead: Lead) -> bool:
             ],
         ).fetchone()
     return row is not None
+
+
+def fetch_pending_leads(limit: int = 50) -> list[dict]:
+    """Leads ainda não enviados ao Trello (trello_card_id IS NULL), mais antigos primeiro."""
+    con = get_connection()
+    rows = con.execute(
+        f"""
+        SELECT {", ".join(_LEAD_COLS)}
+        FROM leads_raw
+        WHERE trello_card_id IS NULL
+        ORDER BY received_at
+        LIMIT ?;
+        """,
+        [limit],
+    ).fetchall()
+    return [dict(zip(_LEAD_COLS, row)) for row in rows]
+
+
+def set_trello_card_id(source: str, external_id: str, card_id: str) -> None:
+    """Marca o lead como já carregado no Trello (idempotência da Fase 4)."""
+    con = get_connection()
+    with _lock:
+        con.execute(
+            "UPDATE leads_raw SET trello_card_id = ? WHERE source = ? AND external_id = ?;",
+            [card_id, source, external_id],
+        )
