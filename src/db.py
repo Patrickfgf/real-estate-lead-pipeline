@@ -17,17 +17,19 @@ _con: duckdb.DuckDBPyConnection | None = None
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS leads_raw (
-    source        VARCHAR   NOT NULL,
-    external_id   VARCHAR   NOT NULL,
-    name          VARCHAR,
-    email         VARCHAR,
-    phone         VARCHAR,
-    message       VARCHAR,
-    business_type VARCHAR,
-    broker_email  VARCHAR,
-    origin        VARCHAR,
-    raw_payload   VARCHAR,
-    received_at   TIMESTAMPTZ,
+    source          VARCHAR   NOT NULL,
+    external_id     VARCHAR   NOT NULL,
+    name            VARCHAR,
+    email           VARCHAR,
+    phone           VARCHAR,
+    message         VARCHAR,
+    listing_ref     VARCHAR,
+    advertiser_code VARCHAR,
+    agency_code     VARCHAR,
+    cpf             VARCHAR,
+    lead_date       TIMESTAMPTZ,
+    raw_payload     VARCHAR,
+    received_at     TIMESTAMPTZ,
     PRIMARY KEY (source, external_id)
 );
 """
@@ -54,9 +56,9 @@ def insert_lead(lead: Lead) -> bool:
         row = con.execute(
             """
             INSERT INTO leads_raw
-                (source, external_id, name, email, phone, message,
-                 business_type, broker_email, origin, raw_payload, received_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (source, external_id, name, email, phone, message, listing_ref,
+                 advertiser_code, agency_code, cpf, lead_date, raw_payload, received_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (source, external_id) DO NOTHING
             RETURNING external_id;
             """,
@@ -67,9 +69,11 @@ def insert_lead(lead: Lead) -> bool:
                 lead.email,
                 lead.phone,
                 lead.message,
-                lead.business_type,
-                lead.broker_email,
-                lead.origin,
+                lead.listing_ref,
+                lead.advertiser_code,
+                lead.agency_code,
+                lead.cpf,
+                lead.lead_date,
                 lead.raw_payload,
                 lead.received_at,
             ],

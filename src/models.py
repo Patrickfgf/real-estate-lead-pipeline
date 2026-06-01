@@ -1,30 +1,37 @@
 """Schemas Pydantic dos leads.
 
-- `WimoveisLead`: payload cru do webhook do Wimóveis (campos oficiais do leadManager).
-- `Lead`: lead canônico, normalizado entre portais — é o formato gravado no DuckDB.
+- `WimoveisContato`: payload cru do evento CONTACTO entregue pelo callback da
+  Navent (plataforma do Imovelweb/Wimóveis). Campos oficiais em português.
+- `Lead`: lead canônico, normalizado entre portais — formato gravado no DuckDB.
 """
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class WimoveisLead(BaseModel):
-    """Payload cru do webhook do Wimóveis (Grupo OLX / leadManager).
+class WimoveisContato(BaseModel):
+    """Evento CONTACTO (lead) do callback da Navent — Imovelweb/Wimóveis.
 
-    Os nomes oficiais vêm em PascalCase; mapeamos via alias para snake_case.
-    `populate_by_name` permite construir tanto pelo alias quanto pelo nome.
+    Os nomes camelCase compostos vêm via alias; os de palavra única
+    (nome, email, telefone, mensagem, referencia, cpf) batem direto.
+    `extra="allow"` preserva campos novos que a Navent venha a adicionar.
     """
 
     model_config = ConfigDict(populate_by_name=True, extra="allow")
 
-    name: str = Field(alias="LeadName")
-    email: str | None = Field(default=None, alias="LeadEmail")
-    phone: str | None = Field(default=None, alias="LeadTelephone")
-    message: str | None = Field(default=None, alias="Message")
-    external_id: str = Field(alias="ExternalId")
-    business_type: str | None = Field(default=None, alias="BusinessType")
-    broker_email: str | None = Field(default=None, alias="BrokerEmail")
-    origin: str | None = Field(default=None, alias="LeadOrigin")
+    id_evento: str = Field(alias="idEvento")
+    tipo_evento: str | None = Field(default=None, alias="tipoEvento")
+    id_tipo_contato: int | None = Field(default=None, alias="idTipoContacto")
+    nome: str
+    email: str | None = None
+    telefone: str | None = None
+    mensagem: str | None = None
+    referencia: str | None = None
+    data_registro: str | None = Field(default=None, alias="dataRegistro")
+    id_contato: int | None = Field(default=None, alias="idContato")
+    codigo_imobiliaria: str | None = Field(default=None, alias="codigoImobiliaria")
+    codigo_anunciante: str | None = Field(default=None, alias="codigoDoAnunciante")
+    cpf: str | None = None
 
 
 class Lead(BaseModel):
@@ -34,14 +41,16 @@ class Lead(BaseModel):
     Dedup é feita por (`source`, `external_id`).
     """
 
-    external_id: str
+    external_id: str  # idEvento, no caso do Wimóveis
     source: str  # 'wimoveis' | 'dfimoveis'
     name: str
     email: str | None = None
     phone: str | None = None
     message: str | None = None
-    business_type: str | None = None
-    broker_email: str | None = None
-    origin: str | None = None
+    listing_ref: str | None = None  # referencia (código do anúncio)
+    advertiser_code: str | None = None  # codigoDoAnunciante (corretor/anunciante)
+    agency_code: str | None = None  # codigoImobiliaria
+    cpf: str | None = None
+    lead_date: datetime | None = None  # dataRegistro (quando o lead ocorreu na origem)
     raw_payload: str
-    received_at: datetime
+    received_at: datetime  # quando nós recebemos/ingerimos

@@ -1,7 +1,8 @@
-"""Ingestão do Wimóveis: rota FastAPI que recebe o webhook oficial.
+"""Ingestão do Wimóveis: rota FastAPI que recebe o callback (push) da Navent.
 
-Fluxo: POST chega → valida o segredo → valida o payload (Pydantic) →
-normaliza para o lead canônico → grava no DuckDB (dedup por external_id).
+Fluxo: a Navent faz POST do evento CONTACTO → valida o segredo → valida o
+payload (Pydantic) → normaliza para o lead canônico → grava no DuckDB
+(dedup por idEvento).
 """
 import json
 from datetime import datetime
@@ -12,7 +13,7 @@ from fastapi.concurrency import run_in_threadpool
 
 from src.config import settings
 from src.db import insert_lead
-from src.models import Lead, WimoveisLead
+from src.models import Lead, WimoveisContato
 
 router = APIRouter(prefix="/webhook", tags=["ingestão"])
 _TZ = ZoneInfo(settings.tz)
@@ -21,15 +22,29 @@ _TZ = ZoneInfo(settings.tz)
 def _check_secret(header_token: str | None, query_token: str | None) -> None:
     """Valida o segredo compartilhado. Aceita via header ou query param.
 
-    NOTA: confirmar com a doc oficial do Wimóveis como o segredo deve ser
-    enviado (header vs. token na URL) e ajustar se necessário. Sem segredo
-    configurado no .env, a validação é pulada (modo dev).
+    NOTA: confirmar com a doc oficial da Navent se/como o callback é autenticado
+    (assinatura, token na URL etc.) e ajustar. Sem segredo configurado no .env,
+    a validação é pulada (modo dev).
     """
     secret = settings.wimoveis_webhook_secret
     if not secret:
         return
     if secret not in (header_token, query_token):
         raise HTTPException(status_code=401, detail="Segredo do webhook inválido")
+
+
+def _parse_data_registro(value: str | None) -> datetime | None:
+    """Converte o dataRegistro da Navent (ISO 8601 com fuso) em datetime.
+
+    Em caso de formato inesperado, retorna None — o valor original continua
+    preservado no raw_payload, então não perdemos informação.
+    """
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 @router.post("/wimoveis")
@@ -42,20 +57,22 @@ async def receber_lead_wimoveis(
 
     payload = await request.json()
     try:
-        raw = WimoveisLead.model_validate(payload)
+        contato = WimoveisContato.model_validate(payload)
     except Exception as exc:  # validação Pydantic
         raise HTTPException(status_code=422, detail=f"Payload inválido: {exc}")
 
     lead = Lead(
-        external_id=raw.external_id,
+        external_id=contato.id_evento,
         source="wimoveis",
-        name=raw.name,
-        email=raw.email,
-        phone=raw.phone,
-        message=raw.message,
-        business_type=raw.business_type,
-        broker_email=raw.broker_email,
-        origin=raw.origin,
+        name=contato.nome,
+        email=contato.email,
+        phone=contato.telefone,
+        message=contato.mensagem,
+        listing_ref=contato.referencia,
+        advertiser_code=contato.codigo_anunciante,
+        agency_code=contato.codigo_imobiliaria,
+        cpf=contato.cpf,
+        lead_date=_parse_data_registro(contato.data_registro),
         raw_payload=json.dumps(payload, ensure_ascii=False),
         received_at=datetime.now(_TZ),
     )
