@@ -1,0 +1,19 @@
+{
+  "leadOrigin": "Grupo OLX",
+  "timestamp": "2026-06-01T13:45:10.500Z",
+  "originLeadId": "df-2026-0001-xyz",
+  "originListingId": "87027856",
+  "clientListingId": "CASA-LAGO-SUL-3Q-456",
+  "name": "João Pereira",
+  "email": "joao.pereira@email.com",
+  "ddd": "61",
+  "phone": "988887777",
+  "phoneNumber": "61988887777",
+  "message": "Tenho interesse na casa no Lago Sul. Aceita financiamento?",
+  "temperature": "Alta",
+  "transactionType": "SELL",
+  "extraData": {
+    "leadCerto": true,
+    "leadType": "CONTACT_FORM"
+  }
+}

@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from src.db import get_connection
+from src.ingest_dfimoveis import router as dfimoveis_router
 from src.ingest_wimoveis import router as wimoveis_router
 
 # Registro de eventos: dá visibilidade em produção (lead recebido, dup, falha no
@@ -30,6 +31,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(wimoveis_router)
+app.include_router(dfimoveis_router)
 
 
 @app.get("/health", tags=["infra"])

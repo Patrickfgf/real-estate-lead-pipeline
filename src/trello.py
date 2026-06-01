@@ -34,6 +34,14 @@ def _fmt_dt(value) -> str:
         return str(value)
 
 
+_SOURCE_DISPLAY = {"wimoveis": "Wimóveis", "dfimoveis": "DFImóveis"}
+
+
+def _source_display(source: str) -> str:
+    """Nome amigável do portal de origem para exibir no card."""
+    return _SOURCE_DISPLAY.get(source, source)
+
+
 def _card_name(lead: dict) -> str:
     ref = lead.get("listing_ref")
     base = f"🏠 {lead['name']}"
@@ -42,7 +50,7 @@ def _card_name(lead: dict) -> str:
 
 def _card_desc(lead: dict) -> str:
     linhas = [
-        f"**Lead Wimóveis** · recebido {_fmt_dt(lead.get('received_at'))}",
+        f"**Lead {_source_display(lead['source'])}** · recebido {_fmt_dt(lead.get('received_at'))}",
         "",
         f"- 👤 Nome: {lead.get('name') or '—'}",
         f"- 📧 Email: {lead.get('email') or '—'}",
@@ -63,7 +71,10 @@ def _card_desc(lead: dict) -> str:
 
 def _source_label_id(source: str) -> str | None:
     """ID da etiqueta de origem (por portal) configurada no .env, se houver."""
-    return {"wimoveis": settings.trello_label_wimoveis}.get(source) or None
+    return {
+        "wimoveis": settings.trello_label_wimoveis,
+        "dfimoveis": settings.trello_label_dfimoveis,
+    }.get(source) or None
 
 
 def create_card(lead: dict) -> str:
