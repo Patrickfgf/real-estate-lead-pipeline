@@ -3,6 +3,7 @@ uvicorn[standard]
 requests
 pandas
 duckdb
+pytz
 python-dotenv
 streamlit
 plotly
