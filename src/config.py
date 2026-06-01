@@ -25,6 +25,14 @@ class Settings:
     # Wimóveis (webhook oficial)
     wimoveis_webhook_secret: str = os.getenv("WIMOVEIS_WEBHOOK_SECRET", "")
 
+    # Navent Open API (login + cadastro do callback que entrega os leads)
+    navent_base_url: str = os.getenv("NAVENT_BASE_URL", "https://api-br-sandbox-open.navent.com")
+    navent_token: str = os.getenv("NAVENT_TOKEN", "")  # gerado no playground (vídeo Loom) ou via login
+    navent_user: str = os.getenv("NAVENT_USER", "")
+    navent_password: str = os.getenv("NAVENT_PASSWORD", "")
+    # URL pública do NOSSO webhook (túnel cloudflared ou domínio do VPS), SEM barra final.
+    webhook_public_url: str = os.getenv("WEBHOOK_PUBLIC_URL", "")
+
     # DFImóveis (API oficial — polling)
     dfimoveis_api_url: str = os.getenv("DFIMOVEIS_API_URL", "")
     dfimoveis_api_token: str = os.getenv("DFIMOVEIS_API_TOKEN", "")
