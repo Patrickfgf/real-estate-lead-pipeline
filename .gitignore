@@ -8,6 +8,10 @@ __pycache__/
 .env
 data/
 
+# E-mails salvos (podem conter credenciais — manter fora do repo)
+*.eml
+*.msg
+
 # Jupyter
 .ipynb_checkpoints/
 
