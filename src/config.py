@@ -34,6 +34,7 @@ class Settings:
     trello_api_key: str = os.getenv("TRELLO_API_KEY", "")
     trello_api_token: str = os.getenv("TRELLO_API_TOKEN", "")
     trello_list_id: str = os.getenv("TRELLO_LIST_ID", "")
+    trello_label_wimoveis: str = os.getenv("TRELLO_LABEL_WIMOVEIS", "")
 
 
 settings = Settings()
