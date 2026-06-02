@@ -86,6 +86,43 @@ def test_create_card_adiciona_etiqueta_de_temperatura(monkeypatch):
     assert posts[1]["params"]["value"] == "LBL-HOT"
 
 
+def _temp_fake_settings():
+    return SimpleNamespace(
+        trello_api_key="K", trello_api_token="T",
+        trello_label_quente="HOT", trello_label_morno="WARM", trello_label_frio="COLD",
+    )
+
+
+def test_sync_temperatura_sobe_de_frio_para_quente(monkeypatch):
+    """Pessoa entrou Frio (só e-mail) e reentra Quente (referencia um anúncio):
+    o card sobe para Quente e a etiqueta Frio é removida."""
+    monkeypatch.setattr(trello, "settings", _temp_fake_settings())
+    monkeypatch.setattr(trello, "_card_label_ids", lambda cid: ["COLD", "LBL-ORIGEM"])
+    add, rem = [], []
+    monkeypatch.setattr(trello, "add_label", lambda cid, lid: add.append(lid))
+    monkeypatch.setattr(trello, "remove_label", lambda cid, lid: rem.append(lid))
+
+    lead = {"source": "wimoveis", "phone": "(61) 99999-8888",
+            "email": "x@e.com", "listing_ref": "AP-1"}  # -> Quente
+    trello._sync_temperature_label("card1", lead)
+    assert "HOT" in add      # subiu para Quente
+    assert "COLD" in rem     # removeu Frio
+    assert "LBL-ORIGEM" not in rem  # não mexe na etiqueta de origem
+
+
+def test_sync_temperatura_nao_rebaixa(monkeypatch):
+    """Card já Quente; lead reentra Frio (só e-mail) — não rebaixa nem mexe nada."""
+    monkeypatch.setattr(trello, "settings", _temp_fake_settings())
+    monkeypatch.setattr(trello, "_card_label_ids", lambda cid: ["HOT"])
+    add, rem = [], []
+    monkeypatch.setattr(trello, "add_label", lambda cid, lid: add.append(lid))
+    monkeypatch.setattr(trello, "remove_label", lambda cid, lid: rem.append(lid))
+
+    lead = {"source": "wimoveis", "phone": None, "email": "x@e.com", "listing_ref": None}  # -> Frio
+    trello._sync_temperature_label("card1", lead)
+    assert add == [] and rem == []
+
+
 def _make_lead(ext: str) -> Lead:
     # Contato ÚNICO por ext (e-mail derivado) — senão a dedup de identidade veria
     # os dois leads como a mesma pessoa e criaria só um card.

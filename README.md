@@ -420,6 +420,8 @@ Duas tabelas no DuckDB.
   do `leads_clean`) já tem card, **inclusive de outro portal**. Se tem, vincula o
   lead ao card existente e anexa um comentário (+ etiqueta do novo portal) em vez
   de abrir um 2º card — assim dois corretores não ligam para o mesmo interessado.
+  Se o lead **reentra mais quente** (ex.: antes só e-mail, agora referencia um
+  anúncio), a etiqueta de temperatura do card é **promovida** — nunca rebaixada.
 - **"Infra como código" do quadro Trello**: `setup_board()` garante quadro,
   listas do funil e etiquetas de origem (por portal) de forma idempotente —
   reprodutível, sem cliques.
@@ -435,7 +437,7 @@ Duas tabelas no DuckDB.
 
 ```powershell
 pip install -r requirements-dev.txt
-pytest                      # 46 testes, isolados de serviços externos
+pytest                      # 49 testes, isolados de serviços externos
 ```
 
 Cobre a ingestão dos dois portais (health, validação de segredo, mapeamento de
