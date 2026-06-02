@@ -1,11 +1,13 @@
 # Projeto Jaré — Pipeline de Ingestão de Leads Imobiliários
 
+[![CI](https://github.com/Patrickfgf/projeto-jare/actions/workflows/ci.yml/badge.svg)](https://github.com/Patrickfgf/projeto-jare/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![Pydantic](https://img.shields.io/badge/Pydantic-E92063?logo=pydantic&logoColor=white)
 ![DuckDB](https://img.shields.io/badge/DuckDB-FFF000?logo=duckdb&logoColor=black)
 ![Trello API](https://img.shields.io/badge/Trello%20API-0052CC?logo=trello&logoColor=white)
 ![pytest](https://img.shields.io/badge/tested%20with-pytest-0A9EDC?logo=pytest&logoColor=white)
+![Ruff](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)
 
 Pipeline de dados que **ingere leads de portais imobiliários** (**Wimóveis** via
 callback oficial da Navent e **DFImóveis** via webhook oficial padrão VrSync),
@@ -123,8 +125,10 @@ não passa na validação é guardado na **caixa de revisão** em vez de ser des
 ├── samples/
 │   ├── wimoveis_lead.json   # Payload de exemplo (Wimóveis) para teste manual
 │   └── dfimoveis_lead.json  # Payload de exemplo (DFImóveis / VrSync) para teste manual
+├── .github/workflows/ci.yml # CI: lint (ruff) + testes (pytest) em cada push/PR
 ├── start.py                 # Sobe o servidor (uvicorn, com reload)
 ├── testar_local.ps1         # Teste manual ponta a ponta (Windows / PowerShell)
+├── ruff.toml                # Config do ruff (lint/format)
 ├── requirements.txt
 ├── requirements-dev.txt
 └── .env.example
@@ -389,3 +393,13 @@ campos, dedup, payload inválido → caixa de revisão + `422`), o cliente da Na
 marcador de rastreio, idempotência e **consolidação da mesma pessoa num único
 card**) e a camada curada (normalização de telefone/e-mail, enriquecimento por
 DDD, garimpo do `raw_payload` e dedup entre portais).
+
+### Lint & CI
+
+```powershell
+ruff check .                # lint (config em ruff.toml; `ruff format` formata)
+```
+
+Um workflow do **GitHub Actions** (`.github/workflows/ci.yml`) roda **lint + testes**
+a cada push no `main` e em todo pull request, na matriz **Python 3.11/3.12/3.13** —
+garantindo que a base fique verde à medida que cresce.

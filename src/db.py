@@ -123,7 +123,7 @@ def fetch_pending_leads(limit: int = 50) -> list[dict]:
         """,
         [limit],
     ).fetchall()
-    return [dict(zip(_LEAD_COLS, row)) for row in rows]
+    return [dict(zip(_LEAD_COLS, row, strict=True)) for row in rows]
 
 
 def carded_contacts() -> list[dict]:
@@ -138,7 +138,7 @@ def carded_contacts() -> list[dict]:
         "FROM leads_raw WHERE trello_card_id IS NOT NULL;"
     ).fetchall()
     cols = ["source", "external_id", "phone", "email", "trello_card_id"]
-    return [dict(zip(cols, row)) for row in rows]
+    return [dict(zip(cols, row, strict=True)) for row in rows]
 
 
 def set_trello_card_id(source: str, external_id: str, card_id: str) -> None:
@@ -196,7 +196,7 @@ def fetch_dead_letter(limit: int = 20) -> list[dict]:
         [limit],
     ).fetchall()
     cols = ["received_at", "source", "error", "raw_payload"]
-    return [dict(zip(cols, row)) for row in rows]
+    return [dict(zip(cols, row, strict=True)) for row in rows]
 
 
 # ----------------------------------------------------------------------------

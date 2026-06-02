@@ -68,12 +68,12 @@ async def receber_lead_dfimoveis(
     try:
         payload = json.loads(raw_text)
         vrsync = VrSyncLead.model_validate(payload)
-    except Exception as exc:  # JSON malformado OU validação Pydantic
+    except Exception as exc:  # noqa: BLE001 — JSON malformado OU validação Pydantic (intencional)
         await run_in_threadpool(insert_dead_letter, "dfimoveis", str(exc), raw_text, received_at)
         logger.warning("Lead DFImóveis recusado e guardado para revisão: %s", exc)
         raise HTTPException(
             status_code=422, detail=f"Payload inválido (guardado para revisão): {exc}"
-        )
+        ) from exc
 
     lead = Lead(
         external_id=vrsync.origin_lead_id,
