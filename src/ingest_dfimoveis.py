@@ -23,6 +23,7 @@ from fastapi.concurrency import run_in_threadpool
 from src.config import settings
 from src.db import insert_dead_letter, insert_lead
 from src.models import Lead, VrSyncLead
+from src.transform import build_clean
 from src.trello import push_pending_leads
 
 router = APIRouter(prefix="/webhook", tags=["ingestão"])
@@ -101,6 +102,15 @@ async def receber_lead_dfimoveis(
             await run_in_threadpool(push_pending_leads)
         except Exception:  # noqa: BLE001 — não derruba o webhook; fica pendente
             logger.exception("Falha na carga do Trello para %s", lead.external_id)
+
+    # Mantém a camada curada (leads_clean) fresca para analytics/dashboard. Best-effort:
+    # o lead já está na crua; falha aqui não derruba o webhook. No volume do projeto o
+    # rebuild completo é barato; em escala, migrar para um rebuild agendado.
+    if inserted:
+        try:
+            await run_in_threadpool(build_clean)
+        except Exception:  # noqa: BLE001 — analytics; não derruba a ingestão
+            logger.exception("Falha ao reconstruir leads_clean para %s", lead.external_id)
 
     return {
         "status": "received",

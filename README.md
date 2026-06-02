@@ -237,8 +237,10 @@ python -m src.transform   # reconstrói leads_clean a partir de leads_raw + impr
 ```
 
 A camada curada é a base analítica que o **scoring** (Fase 3) consome e que o
-**dashboard** (Fase 5) vai consumir. O rebuild completo é barato no volume do
-projeto (alguns leads/dia) e mantém a curada sempre coerente com a crua.
+**dashboard** (Fase 5) vai consumir. Ela é reconstruída **automaticamente a cada
+novo lead ingerido** (best-effort, sem derrubar o webhook) e também sob demanda
+pelo comando acima. O rebuild completo é barato no volume do projeto (alguns
+leads/dia) e mantém a curada sempre coerente com a crua.
 
 ---
 
@@ -372,7 +374,8 @@ Duas tabelas no DuckDB.
 | `person_key`, `is_primary`, `is_duplicate`, `cross_portal` | Dedup de identidade: chave da pessoa, primário vs. duplicado e se cruza portais |
 | `listing_intent`, `lead_score`, `lead_temperature` | Lead scoring (Fase 3): tem intenção num anúncio, pontuação 0–100 e temperatura (Quente/Morno/Frio) |
 
-> É reconstruída inteira a cada `python -m src.transform` — não há estado parcial.
+> É reconstruída inteira a cada ingestão (automático, best-effort) e sob demanda
+> via `python -m src.transform` — não há estado parcial.
 
 ---
 
