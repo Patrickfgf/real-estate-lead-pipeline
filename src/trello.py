@@ -112,6 +112,10 @@ def _temp_label_id(temperature: str) -> str | None:
     }.get(temperature) or None
 
 
+# Quão "quente" é cada faixa — para nunca rebaixar a etiqueta de um card na reentrada.
+_TEMP_RANK = {"Frio": 1, "Morno": 2, "Quente": 3}
+
+
 def create_card(lead: dict) -> str:
     """Cria o card no Trello e devolve o id. Lança em erro de HTTP.
 
@@ -159,13 +163,58 @@ def add_comment(card_id: str, text: str) -> None:
 
 
 def add_label(card_id: str, label_id: str) -> None:
-    """Adiciona uma etiqueta de origem ao card (idempotente do lado do Trello)."""
+    """Adiciona uma etiqueta ao card (idempotente do lado do Trello)."""
     resp = requests.post(
         f"{_TRELLO_API}/cards/{card_id}/idLabels",
         params={**_auth(), "value": label_id},
         timeout=_TIMEOUT,
     )
     resp.raise_for_status()
+
+
+def remove_label(card_id: str, label_id: str) -> None:
+    """Remove uma etiqueta do card."""
+    resp = requests.delete(
+        f"{_TRELLO_API}/cards/{card_id}/idLabels/{label_id}",
+        params=_auth(),
+        timeout=_TIMEOUT,
+    )
+    resp.raise_for_status()
+
+
+def _card_label_ids(card_id: str) -> list:
+    """IDs das etiquetas atualmente no card (lê o card completo)."""
+    resp = requests.get(f"{_TRELLO_API}/cards/{card_id}", params=_auth(), timeout=_TIMEOUT)
+    resp.raise_for_status()
+    return resp.json().get("idLabels") or []
+
+
+def _sync_temperature_label(card_id: str, lead: dict) -> None:
+    """Garante que o card carregue a temperatura MAIS QUENTE entre a atual e a do
+    lead que reentra — uma única etiqueta de temperatura, nunca rebaixando.
+
+    Ex.: pessoa entrou só com e-mail (Frio) e depois referencia um anúncio (Quente):
+    o card sobe para Quente. O contrário (reentrar mais frio) não rebaixa.
+    """
+    por_nome = {t: _temp_label_id(t) for t in ("Quente", "Morno", "Frio")}
+    por_nome = {t: i for t, i in por_nome.items() if i}  # só as configuradas
+    if not por_nome:
+        return  # etiquetas de temperatura não configuradas no .env
+    rank_por_id = {tid: _TEMP_RANK[t] for t, tid in por_nome.items()}
+
+    novo_id = por_nome.get(_lead_temperature(lead))
+    atuais = set(_card_label_ids(card_id))
+    temp_no_card = [tid for tid in atuais if tid in rank_por_id]
+
+    alvo_rank = max([rank_por_id.get(novo_id, 0)] + [rank_por_id[t] for t in temp_no_card])
+    alvo_id = next((tid for tid, r in rank_por_id.items() if r == alvo_rank), None)
+    if not alvo_id:
+        return
+    if alvo_id not in atuais:
+        add_label(card_id, alvo_id)
+    for tid in temp_no_card:  # tira qualquer outra temperatura (mais fria ou duplicada)
+        if tid != alvo_id:
+            remove_label(card_id, tid)
 
 
 def _dup_comment(lead: dict) -> str:
@@ -193,6 +242,7 @@ def _link_to_existing_card(card_id: str, lead: dict) -> None:
         label_id = _source_label_id(lead["source"])
         if label_id:
             add_label(card_id, label_id)  # mostra que o card veio de 2 portais
+        _sync_temperature_label(card_id, lead)  # esquenta o card se o lead reentrou mais quente
     except Exception as exc:  # noqa: BLE001 — vínculo já feito; isto é enriquecimento
         print(f"[trello] vínculo ok, anexo falhou ({card_id}): {exc}", file=sys.stderr)
 
