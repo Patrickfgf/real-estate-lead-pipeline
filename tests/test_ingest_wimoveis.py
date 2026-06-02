@@ -76,6 +76,21 @@ def test_mapeamento_dos_campos_no_banco():
     assert lead_date is not None and lead_date.tzinfo is not None  # dataRegistro parseado com fuso
 
 
+def test_ingest_reconstroi_leads_clean_com_score():
+    """A camada curada é reconstruída na ingestão — fresca p/ analytics/dashboard."""
+    lead = {**SAMPLE, "idEvento": "evt-clean-auto"}
+    client.post("/webhook/wimoveis", params={"token": SECRET}, json=lead)
+
+    row = get_connection().execute(
+        "SELECT lead_score, lead_temperature FROM leads_clean "
+        "WHERE source = 'wimoveis' AND external_id = ?",
+        ["evt-clean-auto"],
+    ).fetchone()
+    assert row is not None  # leads_clean foi (re)construída automaticamente
+    assert row[0] == 100  # anúncio (referencia) + telefone celular + e-mail
+    assert row[1] == "Quente"
+
+
 def test_payload_invalido_retorna_422():
     # falta idEvento e nome (campos obrigatórios)
     resp = client.post(
