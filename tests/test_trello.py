@@ -1,5 +1,5 @@
 """Testes da carga no Trello (Fase 4) — sem tocar na API real (mock)."""
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -45,12 +45,14 @@ def test_create_card_envia_idlabels_na_query(monkeypatch):
 
 
 def _make_lead(ext: str) -> Lead:
+    # Contato ÚNICO por ext (e-mail derivado) — senão a dedup de identidade veria
+    # os dois leads como a mesma pessoa e criaria só um card.
     return Lead(
         external_id=ext,
         source="wimoveis",
         name="Fulano de Tal",
-        email="fulano@email.com",
-        phone="(61) 90000-0000",
+        email=f"{ext}@email.com",
+        phone=None,
         message="Tenho interesse no imóvel.",
         listing_ref="REF-123",
         advertiser_code="ANUN-1",
@@ -122,3 +124,53 @@ def test_push_pending_cria_e_marca_idempotente(monkeypatch):
         "SELECT trello_card_id FROM leads_raw WHERE external_id = 'trello-1'"
     ).fetchone()[0]
     assert card_id == "card-trello-1"
+
+
+def test_dup_comment_menciona_portal_mensagem_e_marcador():
+    lead = {"source": "dfimoveis", "external_id": "x9", "received_at": None,
+            "message": "quero visitar"}
+    txt = trello._dup_comment(lead)
+    assert "DFImóveis" in txt
+    assert "quero visitar" in txt
+    assert "jare-ext:dfimoveis:x9" in txt
+
+
+def test_push_nao_duplica_card_para_mesma_pessoa_entre_portais(monkeypatch):
+    """Mesma pessoa (mesmo telefone) entrando nos dois portais → UM card só.
+
+    O lead mais antigo cria o card; o duplicado é vinculado ao mesmo card e
+    recebe um comentário, sem gerar um 2º card.
+    """
+    base = datetime(2026, 6, 2, 8, 0, tzinfo=ZoneInfo("America/Sao_Paulo"))
+    # Telefone distinto de qualquer outro usado na suíte; normaliza igual nos dois.
+    insert_lead(Lead(external_id="dup-w", source="wimoveis", name="Ana Lima",
+                     email=None, phone="(61) 95555-1234", message="msg wimoveis",
+                     raw_payload="{}", received_at=base))
+    insert_lead(Lead(external_id="dup-d", source="dfimoveis", name="Ana Lima",
+                     email=None, phone="61955551234", message="msg dfimoveis",
+                     raw_payload="{}", received_at=base + timedelta(hours=1)))
+
+    criados, vinculos = [], []
+
+    def fake_create(lead):
+        criados.append(lead["external_id"])
+        return f"card-{lead['external_id']}"
+
+    def fake_link(card_id, lead):
+        vinculos.append((card_id, lead["source"], lead["external_id"]))
+
+    monkeypatch.setattr(trello, "create_card", fake_create)
+    monkeypatch.setattr(trello, "_link_to_existing_card", fake_link)
+
+    trello.push_pending_leads()
+
+    # dup-w (mais antigo) criou o card; dup-d foi vinculado, NÃO criou 2º card
+    assert "dup-w" in criados
+    assert "dup-d" not in criados
+    assert ("card-dup-w", "dfimoveis", "dup-d") in vinculos
+
+    # ambos apontam para o MESMO card no banco
+    con = get_connection()
+    cw = con.execute("SELECT trello_card_id FROM leads_raw WHERE external_id = 'dup-w'").fetchone()[0]
+    cd = con.execute("SELECT trello_card_id FROM leads_raw WHERE external_id = 'dup-d'").fetchone()[0]
+    assert cw == "card-dup-w" and cd == "card-dup-w"

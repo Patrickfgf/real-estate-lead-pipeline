@@ -261,7 +261,9 @@ leads/dia) e mantém a curada sempre coerente com a crua.
 
 A carga é **idempotente**: cada lead vira no máximo um card (vínculo em
 `leads_raw.trello_card_id` + marcador `jare-ext:<source>:<external_id>` na
-descrição do card).
+descrição do card). Além disso, a **mesma pessoa** (telefone/e-mail) entrando por
+mais de um portal é **consolidada num único card** — cada nova entrada vira um
+comentário no card existente, em vez de gerar cards duplicados.
 
 ---
 
@@ -358,6 +360,11 @@ Duas tabelas no DuckDB.
 - **Carga no Trello idempotente e best-effort**: o vínculo fica no banco; falha
   ao criar um card não derruba o webhook nem os demais leads — a próxima carga
   reenvia os pendentes.
+- **Uma pessoa, um card (dedup de identidade na carga)**: antes de criar um card,
+  a carga verifica se a mesma pessoa (telefone/e-mail normalizados — a mesma regra
+  do `leads_clean`) já tem card, **inclusive de outro portal**. Se tem, vincula o
+  lead ao card existente e anexa um comentário (+ etiqueta do novo portal) em vez
+  de abrir um 2º card — assim dois corretores não ligam para o mesmo interessado.
 - **"Infra como código" do quadro Trello**: `setup_board()` garante quadro,
   listas do funil e etiquetas de origem (por portal) de forma idempotente —
   reprodutível, sem cliques.
@@ -373,11 +380,12 @@ Duas tabelas no DuckDB.
 
 ```powershell
 pip install -r requirements-dev.txt
-pytest                      # 38 testes, isolados de serviços externos
+pytest                      # 40 testes, isolados de serviços externos
 ```
 
 Cobre a ingestão dos dois portais (health, validação de segredo, mapeamento de
 campos, dedup, payload inválido → caixa de revisão + `422`), o cliente da Navent
 (montagem do corpo de cadastro do callback), a carga no Trello (montagem do card,
-marcador de rastreio, idempotência) e a camada curada (normalização de telefone/
-e-mail, enriquecimento por DDD, garimpo do `raw_payload` e dedup entre portais).
+marcador de rastreio, idempotência e **consolidação da mesma pessoa num único
+card**) e a camada curada (normalização de telefone/e-mail, enriquecimento por
+DDD, garimpo do `raw_payload` e dedup entre portais).

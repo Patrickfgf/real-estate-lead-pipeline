@@ -191,8 +191,28 @@ def enrich(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def compute_person_key(phone: str | None, email: str | None) -> str | None:
+    """Chave de identidade da pessoa a partir de telefone/e-mail CRUS.
+
+    Telefone normalizado (E.164) tem precedência sobre e-mail. É a mesma regra
+    usada no dedup em lote (`leads_clean`) e na carga do Trello (evitar 2º card
+    para a mesma pessoa) — garantindo que os dois caminhos concordem.
+    """
+    ph = normalize_phone(phone)
+    if ph["phone_valid"]:
+        return f"tel:{ph['phone_e164']}"
+    em = normalize_email(email)
+    if em["email_valid"]:
+        return f"email:{em['email_clean']}"
+    return None
+
+
 def _person_key(row: pd.Series) -> str | None:
-    """Chave de identidade da pessoa: telefone (preferido) ou e-mail válidos."""
+    """Chave de identidade para uma linha JÁ enriquecida (usa as colunas normalizadas).
+
+    Produz o mesmo formato que `compute_person_key` ("tel:<e164>" / "email:<clean>"),
+    mas sem re-normalizar — aqui o telefone/e-mail já passaram por `enrich`.
+    """
     if row.get("phone_valid"):
         return f"tel:{row['phone_e164']}"
     if row.get("email_valid"):
