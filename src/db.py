@@ -136,6 +136,28 @@ def set_trello_card_id(source: str, external_id: str, card_id: str) -> None:
         )
 
 
+def leads_raw_dataframe():
+    """Lê toda a camada crua `leads_raw` como DataFrame pandas (camada curada, Fase 2)."""
+    con = get_connection()
+    with _lock:
+        return con.execute("SELECT * FROM leads_raw").df()
+
+
+def rebuild_clean_table(df) -> None:
+    """(Re)cria `leads_clean` a partir de um DataFrame já curado. Idempotente.
+
+    CREATE OR REPLACE substitui a tabela inteira — o transform (`src/transform.py`)
+    sempre reconstrói a curada do zero a partir da crua, então não há estado parcial.
+    """
+    con = get_connection()
+    with _lock:
+        con.register("_clean_df", df)
+        try:
+            con.execute("CREATE OR REPLACE TABLE leads_clean AS SELECT * FROM _clean_df")
+        finally:
+            con.unregister("_clean_df")
+
+
 def insert_dead_letter(source: str, error: str, raw_payload: str, received_at) -> None:
     """Guarda na caixa de revisão um POST que não pôde ser processado.
 
