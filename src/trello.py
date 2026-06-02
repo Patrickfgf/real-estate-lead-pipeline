@@ -250,7 +250,7 @@ def _ensure_lists(board_id: str) -> dict:
         timeout=_TIMEOUT,
     )
     atuais.raise_for_status()
-    por_nome = {l["name"]: l["id"] for l in atuais.json()}
+    por_nome = {item["name"]: item["id"] for item in atuais.json()}
     ids = {}
     for nome in PIPELINE:
         if nome in por_nome:
@@ -273,7 +273,7 @@ def _ensure_labels(board_id: str) -> dict:
         timeout=_TIMEOUT,
     )
     atuais.raise_for_status()
-    por_nome = {l["name"]: l["id"] for l in atuais.json() if l.get("name")}
+    por_nome = {item["name"]: item["id"] for item in atuais.json() if item.get("name")}
     ids = {}
     for nome, cor in SOURCE_LABELS.items():
         if nome in por_nome:

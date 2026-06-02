@@ -22,6 +22,7 @@ import pandas as pd
 
 from src.db import leads_raw_dataframe, rebuild_clean_table
 
+
 # ---------------------------------------------------------------------------
 # Normalização de telefone (padrão Brasil)
 # ---------------------------------------------------------------------------

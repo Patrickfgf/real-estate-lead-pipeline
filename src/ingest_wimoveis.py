@@ -70,14 +70,14 @@ async def receber_lead_wimoveis(
     try:
         payload = json.loads(raw_text)
         contato = WimoveisContato.model_validate(payload)
-    except Exception as exc:  # JSON malformado OU validação Pydantic
+    except Exception as exc:  # noqa: BLE001 — JSON malformado OU validação Pydantic (intencional)
         # Rede de segurança: guarda o cru na caixa de revisão antes de recusar.
         # Nenhum lead se perde, mesmo vindo num formato inesperado.
         await run_in_threadpool(insert_dead_letter, "wimoveis", str(exc), raw_text, received_at)
         logger.warning("Lead Wimóveis recusado e guardado para revisão: %s", exc)
         raise HTTPException(
             status_code=422, detail=f"Payload inválido (guardado para revisão): {exc}"
-        )
+        ) from exc
 
     lead = Lead(
         external_id=contato.id_evento,
