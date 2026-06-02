@@ -3,10 +3,6 @@
 target-version = "py311"   # menor versão suportada (ver badge no README)
 line-length = 120
 
-# Script auxiliar de geração de PDF (reportlab) — ferramenta, não faz parte do
-# pipeline; fica fora do lint da aplicação.
-extend-exclude = ["gerar_pdf.py"]
-
 [lint]
 # Conjunto pragmático: erros/pyflakes (E,F), imports ordenados (I), modernização
 # de sintaxe (UP), bugbear (B), comprehensions (C4) e blind-except (BLE — casa com
