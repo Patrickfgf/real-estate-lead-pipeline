@@ -42,6 +42,11 @@ class Settings:
     trello_list_id: str = os.getenv("TRELLO_LIST_ID", "")
     trello_label_wimoveis: str = os.getenv("TRELLO_LABEL_WIMOVEIS", "")
     trello_label_dfimoveis: str = os.getenv("TRELLO_LABEL_DFIMOVEIS", "")
+    # Etiquetas de temperatura do lead (Fase 3 — lead scoring). IDs gerados por
+    # `python -m src.trello setup`.
+    trello_label_quente: str = os.getenv("TRELLO_LABEL_QUENTE", "")
+    trello_label_morno: str = os.getenv("TRELLO_LABEL_MORNO", "")
+    trello_label_frio: str = os.getenv("TRELLO_LABEL_FRIO", "")
 
 
 settings = Settings()

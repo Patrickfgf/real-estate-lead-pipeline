@@ -1,4 +1,4 @@
-"""Testes da camada curada (Fase 2): normalização, enriquecimento e dedup.
+"""Testes da camada curada: normalização, enriquecimento, dedup e lead scoring.
 
 As funções de normalização são puras (sem banco) — testadas direto. O
 `build_clean` é testado de ponta a ponta inserindo leads crus e conferindo a
@@ -17,8 +17,11 @@ from src.transform import (
     ddd_to_uf,
     extract_extras,
     flag_duplicates,
+    has_listing_intent,
     normalize_email,
     normalize_phone,
+    score_lead,
+    score_to_temperature,
     uf_to_regiao,
 )
 
@@ -130,6 +133,51 @@ def test_extras_aluguel_e_payload_quebrado():
 
 
 # --------------------------------------------------------------------------
+# lead scoring (Fase 3) — rubrica do cliente: intenção > telefone > e-mail
+# --------------------------------------------------------------------------
+def test_has_listing_intent():
+    assert has_listing_intent("AP-ASA-SUL-2Q-123") is True
+    assert has_listing_intent("   ") is False
+    assert has_listing_intent(None) is False
+
+
+def test_score_respeita_hierarquia_do_cliente():
+    """intenção (sozinha) > telefone+e-mail > só telefone > só e-mail > nada."""
+    so_intencao = score_lead(listing_intent=True, phone_valid=False,
+                             phone_is_mobile=False, email_valid=False)
+    tel_e_email = score_lead(listing_intent=False, phone_valid=True,
+                             phone_is_mobile=True, email_valid=True)
+    so_telefone = score_lead(listing_intent=False, phone_valid=True,
+                             phone_is_mobile=False, email_valid=False)
+    so_email = score_lead(listing_intent=False, phone_valid=False,
+                          phone_is_mobile=False, email_valid=True)
+    nada = score_lead(listing_intent=False, phone_valid=False,
+                      phone_is_mobile=False, email_valid=False)
+    # o lead com intenção supera até quem tem telefone E e-mail (o piso de 60 > 40)
+    assert so_intencao > tel_e_email > so_telefone > so_email > nada == 0
+    assert score_lead(listing_intent=True, phone_valid=True,
+                      phone_is_mobile=True, email_valid=True) == 100
+
+
+def test_score_celular_desempata_dentro_do_tier_de_telefone():
+    celular = score_lead(listing_intent=False, phone_valid=True, phone_is_mobile=True, email_valid=False)
+    fixo = score_lead(listing_intent=False, phone_valid=True, phone_is_mobile=False, email_valid=False)
+    so_intencao = score_lead(listing_intent=True, phone_valid=False, phone_is_mobile=False, email_valid=False)
+    assert celular > fixo
+    assert celular < so_intencao  # nem o melhor telefone alcança a intenção
+
+
+def test_score_to_temperature_faixas():
+    quente = score_lead(listing_intent=True, phone_valid=False, phone_is_mobile=False, email_valid=False)
+    morno = score_lead(listing_intent=False, phone_valid=True, phone_is_mobile=False, email_valid=False)
+    frio = score_lead(listing_intent=False, phone_valid=False, phone_is_mobile=False, email_valid=True)
+    assert score_to_temperature(quente) == "Quente"
+    assert score_to_temperature(morno) == "Morno"
+    assert score_to_temperature(frio) == "Frio"
+    assert score_to_temperature(0) == "Frio"
+
+
+# --------------------------------------------------------------------------
 # flag_duplicates (entity-resolution-lite entre portais)
 # --------------------------------------------------------------------------
 def test_dedup_marca_primario_e_cross_portal():
@@ -198,3 +246,36 @@ def test_build_clean_enriquece_e_deduplica_entre_portais():
     assert transacao == "Compra"
     assert temperatura == "Alta"
     assert is_dup is True and cross is True
+
+
+def test_build_clean_pontua_e_classifica_temperatura():
+    base = datetime(2026, 6, 3, 9, 0, tzinfo=_TZ)
+    # Lead "quente": veio com intenção num anúncio (listing_ref) + celular + e-mail.
+    insert_lead(Lead(
+        external_id="score-hot", source="wimoveis", name="Lead Quente",
+        email="hot@email.com", phone="(61) 98888-7777", message="quero esse",
+        listing_ref="AP-ASA-SUL-2Q-999", raw_payload="{}", received_at=base,
+    ))
+    # Lead "frio": só e-mail — sem telefone válido e sem anúncio.
+    insert_lead(Lead(
+        external_id="score-cold", source="dfimoveis", name="Lead Frio",
+        email="cold@email.com", phone=None, message="oi",
+        listing_ref=None, raw_payload="{}", received_at=base + timedelta(minutes=1),
+    ))
+
+    build_clean()
+    con = get_connection()
+    hot = con.execute(
+        "SELECT listing_intent, lead_score, lead_temperature "
+        "FROM leads_clean WHERE external_id = 'score-hot'"
+    ).fetchone()
+    assert hot[0] is True
+    assert hot[1] == 100  # intenção(60) + telefone(25) + celular(5) + e-mail(10)
+    assert hot[2] == "Quente"
+
+    cold = con.execute(
+        "SELECT listing_intent, lead_score, lead_temperature "
+        "FROM leads_clean WHERE external_id = 'score-cold'"
+    ).fetchone()
+    assert cold[0] is False
+    assert cold[2] == "Frio"

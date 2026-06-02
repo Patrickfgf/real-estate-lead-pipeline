@@ -33,7 +33,9 @@ def normalize_phone(raw: str | None) -> dict:
     de país ("+55..."). Distingue celular (9 dígitos, começa com 9) de fixo
     (8 dígitos). Sem DDD identificável, marca como inválido — não chuta.
     """
-    digits = re.sub(r"\D", "", raw or "")
+    # Tolera entrada não-string (None, ou NaN quando o telefone vem NULL do banco
+    # e o pandas lê como float) — o lead pode legitimamente não ter telefone.
+    digits = re.sub(r"\D", "", raw if isinstance(raw, str) else "")
     # Remove o código do país (+55) quando o tamanho indica que ele está presente.
     if digits.startswith("55") and len(digits) in (12, 13):
         digits = digits[2:]
@@ -61,7 +63,8 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 def normalize_email(raw: str | None) -> dict:
     """Minúsculas + trim, validação de formato e extração do domínio."""
-    email = (raw or "").strip().lower()
+    # Tolera entrada não-string (None/NaN) — e-mail também é opcional no lead.
+    email = (raw if isinstance(raw, str) else "").strip().lower()
     valid = bool(_EMAIL_RE.match(email))
     domain = email.split("@", 1)[1] if valid else None
     return {"email_clean": email or None, "email_valid": valid, "email_domain": domain}
@@ -75,7 +78,7 @@ _NAME_PARTICLES = {"de", "da", "do", "das", "dos", "e"}
 
 def clean_name(raw: str | None) -> str | None:
     """Colapsa espaços e capitaliza, mantendo partículas ("de/da/do") minúsculas."""
-    if not raw or not raw.strip():
+    if not isinstance(raw, str) or not raw.strip():
         return None
     palavras = raw.split()
     out = []
@@ -159,6 +162,90 @@ def extract_extras(raw_payload: str | None, source: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Lead scoring (Fase 3) — rubrica priorizada PELO CLIENTE (a corretora)
+# ---------------------------------------------------------------------------
+# Hierarquia que o cliente definiu para o lead mais quente:
+#   1º) já vem com INTENÇÃO num imóvel anunciado (referencia um anúncio
+#       específico — comprar OU alugar, tanto faz: o que pesa é a intenção);
+#   2º) deixou TELEFONE;
+#   3º) deixou ao menos E-MAIL.
+# Os pesos abaixo encodam exatamente essa ordem e ficam centralizados num só
+# lugar — se o cliente recalibrar, é só mexer aqui (nada de reescrever lógica).
+SCORE_WEIGHTS = {
+    "listing_intent": 60,     # tem referência a um imóvel anunciado (listing_ref)
+    "phone_valid": 25,        # deixou telefone válido
+    "phone_mobile_bonus": 5,  # ...e é celular (contato direto) — desempate no tier do telefone
+    "email_valid": 10,        # deixou ao menos e-mail válido
+}
+# Faixas de temperatura exibidas ao corretor (viram etiqueta no Trello). O piso
+# da "intenção" (60) é, DE PROPÓSITO, maior que a soma de todos os sinais abaixo
+# dele (25 + 5 + 10 = 40): assim QUALQUER lead com intenção fica acima de QUALQUER
+# lead sem ela, respeitando a hierarquia do cliente mesmo com os pesos somados.
+SCORE_HOT = 60   # >= 60  -> "Quente" (veio com intenção num anúncio)
+SCORE_WARM = 25  # >= 25  -> "Morno"  (deixou telefone)
+                 # <  25  -> "Frio"   (só e-mail / contato fraco)
+
+
+def has_listing_intent(listing_ref) -> bool:
+    """True se o lead referencia um imóvel anunciado (código do anúncio presente).
+
+    É o sinal de "intenção" mais forte da rubrica: o interessado não veio genérico
+    — veio atrás de um imóvel específico que estava anunciado. Exige string não
+    vazia: quando o anúncio vem NULL do banco, o pandas o lê como NaN (float), que
+    NÃO é intenção.
+    """
+    return isinstance(listing_ref, str) and bool(listing_ref.strip())
+
+
+def score_lead(
+    *,
+    listing_intent: bool,
+    phone_valid: bool,
+    phone_is_mobile: bool = False,
+    email_valid: bool = False,
+) -> int:
+    """Pontua o lead de 0 a 100 pela rubrica do cliente. Função pura e testável.
+
+    intenção (60) > telefone (25, +5 se celular) > e-mail (10). Ver SCORE_WEIGHTS.
+    """
+    score = 0
+    if listing_intent:
+        score += SCORE_WEIGHTS["listing_intent"]
+    if phone_valid:
+        score += SCORE_WEIGHTS["phone_valid"]
+        if phone_is_mobile:
+            score += SCORE_WEIGHTS["phone_mobile_bonus"]
+    if email_valid:
+        score += SCORE_WEIGHTS["email_valid"]
+    return min(score, 100)
+
+
+def score_to_temperature(score: int) -> str:
+    """Mapeia o score numérico para a faixa de temperatura (etiqueta no Trello)."""
+    if score >= SCORE_HOT:
+        return "Quente"
+    if score >= SCORE_WARM:
+        return "Morno"
+    return "Frio"
+
+
+def _score_row(row: pd.Series) -> dict:
+    """Pontua uma linha JÁ enriquecida (colunas normalizadas + listing_ref crua)."""
+    intent = has_listing_intent(row.get("listing_ref"))
+    score = score_lead(
+        listing_intent=intent,
+        phone_valid=bool(row.get("phone_valid")),
+        phone_is_mobile=bool(row.get("phone_is_mobile")),
+        email_valid=bool(row.get("email_valid")),
+    )
+    return {
+        "listing_intent": intent,
+        "lead_score": score,
+        "lead_temperature": score_to_temperature(score),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Pipeline: enriquecimento + dedup entre portais
 # ---------------------------------------------------------------------------
 # Colunas (e ordem) da camada curada `leads_clean`.
@@ -172,6 +259,7 @@ CLEAN_COLUMNS = [
     "listing_ref", "advertiser_code", "agency_code", "cpf",
     "lead_date", "received_at",
     "person_key", "is_primary", "is_duplicate", "cross_portal",
+    "listing_intent", "lead_score", "lead_temperature",
     "trello_card_id",
 ]
 
@@ -189,6 +277,10 @@ def enrich(df: pd.DataFrame) -> pd.DataFrame:
     df["name_clean"] = df["name"].apply(clean_name)
     df["uf"] = df["phone_ddd"].apply(ddd_to_uf)
     df["regiao"] = df["uf"].apply(uf_to_regiao)
+
+    # Lead scoring (Fase 3): depende das colunas normalizadas acima + listing_ref.
+    scoring = df.apply(_score_row, axis=1).apply(pd.Series)
+    df = pd.concat([df, scoring], axis=1)
     return df
 
 
@@ -266,6 +358,7 @@ def build_clean() -> dict:
         "cross_portal": int((curado["cross_portal"] & curado["is_duplicate"]).sum()),
         "por_uf": curado["uf"].value_counts(dropna=False).to_dict(),
         "por_transacao": curado["transaction_type"].value_counts(dropna=False).to_dict(),
+        "por_temperatura": curado["lead_temperature"].value_counts(dropna=False).to_dict(),
     }
 
 
@@ -291,3 +384,8 @@ if __name__ == "__main__":
     if resumo.get("por_transacao"):
         txs = ", ".join(f"{tx or '—'}={n}" for tx, n in resumo["por_transacao"].items())
         print(f"  por tipo de transação.: {txs}")
+    if resumo.get("por_temperatura"):
+        ordem = {"Quente": 0, "Morno": 1, "Frio": 2}
+        itens = sorted(resumo["por_temperatura"].items(), key=lambda kv: ordem.get(kv[0], 9))
+        temps = ", ".join(f"{t or '—'}={n}" for t, n in itens)
+        print(f"  por temperatura.......: {temps}")

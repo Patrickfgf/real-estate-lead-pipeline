@@ -44,7 +44,7 @@ revisão** (dead-letter) para inspeção e reprocessamento.
                             └────────┬─────────┘  └────────────────────────┘
                                      ▼
               limpeza + enriquecimento (pandas) → leads_clean   ✅
-                        → lead scoring  [planejado]
+                 → lead scoring (Quente / Morno / Frio)   ✅
                                      ▼
                        ┌──────────────┴──────────────┐
                        ▼                              ▼
@@ -73,8 +73,9 @@ não passa na validação é guardado na **caixa de revisão** em vez de ser des
 | Integração (saída) | **Trello REST API** (via `requests`) | Cria os cards no funil + "infra como código" do quadro |
 | Integração (entrada) | **Navent Open API** (via `requests`) | Cadastra/gerencia o callback de leads do Wimóveis |
 | Config | **python-dotenv** | Variáveis de ambiente / segredos fora do código |
+| Lead scoring | **pandas** (regras) | Pontua a qualidade do lead (0–100) e classifica a temperatura (Quente/Morno/Frio) pela rubrica do cliente — vira etiqueta no card |
 | Testes | **pytest** + **httpx** (`TestClient`) | Testes de ingestão, transform e carga, isolados de serviços externos |
-| _Planejado (Fases 3 e 5)_ | **Streamlit**, **Plotly** | Dashboard e visualização |
+| _Planejado (Fase 5)_ | **Streamlit**, **Plotly** | Dashboard e visualização |
 
 ---
 
@@ -89,15 +90,15 @@ não passa na validação é guardado na **caixa de revisão** em vez de ser des
 | — | Cliente da Navent Open API (cadastro do callback de leads) | ✅ |
 | 4 | Carga no Trello (1 card por lead, idempotente) + setup do quadro como código | ✅ |
 | 2 | Limpeza / enriquecimento → camada curada `leads_clean` (pandas) + dedup entre portais | ✅ |
-| 3 | Lead scoring (qualidade do lead) | ⬜ |
+| 3 | Lead scoring (qualidade do lead → temperatura Quente/Morno/Frio + etiqueta no Trello) | ✅ |
 | 5 | Dashboard Streamlit | ⬜ |
 | 6 | Orquestração / deploy | ⬜ |
 
 > A **Fase 4 foi antecipada** para fechar uma fatia vertical — *lead entra → card
-> sai no Trello* — e entregar valor cedo. A **Fase 2** (limpeza/enriquecimento) já
-> construiu a camada curada `leads_clean`, base analítica do projeto. Os próximos
-> saltos são o **scoring** (Fase 3) e o **dashboard** (Fase 5), ambos consumindo a
-> camada curada.
+> sai no Trello* — e entregar valor cedo. A **Fase 2** (limpeza/enriquecimento)
+> construiu a camada curada `leads_clean`, base analítica do projeto, e a **Fase 3**
+> (lead scoring) já pontua e classifica cada lead. O próximo salto é o **dashboard**
+> (Fase 5), consumindo a camada curada.
 
 ---
 
@@ -113,7 +114,7 @@ não passa na validação é guardado na **caixa de revisão** em vez de ser des
 │   ├── ingest_dfimoveis.py  # Rota FastAPI do webhook DFImóveis (padrão VrSync / GrupoZAP)
 │   ├── navent.py            # Cliente da Navent Open API: cadastra o callback de leads (CLI)
 │   ├── trello.py            # Carga idempotente + setup do quadro (também é CLI)
-│   ├── transform.py         # Camada curada: limpeza/enriquecimento (pandas) → leads_clean (CLI)
+│   ├── transform.py         # Camada curada + lead scoring (pandas) → leads_clean (CLI)
 │   └── main.py              # App FastAPI (monta as rotas + /health + logging)
 ├── tests/
 │   ├── conftest.py          # Isola os testes: DuckDB temporário, sem credenciais reais
@@ -235,9 +236,45 @@ O transform (`src/transform.py`) faz, com funções puras e testadas:
 python -m src.transform   # reconstrói leads_clean a partir de leads_raw + imprime um resumo
 ```
 
-A camada curada é a base analítica que o **scoring** (Fase 3) e o **dashboard**
-(Fase 5) vão consumir. O rebuild completo é barato no volume do projeto (alguns
-leads/dia) e mantém a curada sempre coerente com a crua.
+A camada curada é a base analítica que o **scoring** (Fase 3) consome e que o
+**dashboard** (Fase 5) vai consumir. O rebuild completo é barato no volume do
+projeto (alguns leads/dia) e mantém a curada sempre coerente com a crua.
+
+---
+
+## Lead scoring — priorização (Fase 3)
+
+Nem todo lead vale o mesmo. O scoring pontua cada lead de **0 a 100** e o
+classifica numa **temperatura** (Quente / Morno / Frio), para o corretor atacar
+primeiro quem está mais perto de fechar. A regra é **baseada em regras**
+(explicável e testável), não em ML — o volume é baixo e não há histórico rotulado
+de ganho/perdido para treinar um modelo; quando houver, é o caminho natural.
+
+**A rubrica foi definida pelo cliente** (a corretora), por ordem de prioridade:
+
+| Sinal | Peso | Por quê |
+|---|:---:|---|
+| **Intenção num imóvel anunciado** (`listing_ref` presente — comprar *ou* alugar) | **60** | O lead mais quente: não veio genérico, veio atrás de um anúncio específico |
+| **Telefone válido** (+5 se celular) | **25 (+5)** | Contato direto; celular fala mais alto que fixo |
+| **E-mail válido** | **10** | Contato mínimo |
+
+Faixas: **Quente ≥ 60 · Morno ≥ 25 · Frio < 25**. O piso da intenção (60) é, de
+propósito, maior que a soma de tudo abaixo (25 + 5 + 10 = 40) — assim **qualquer**
+lead com intenção fica acima de **qualquer** lead sem ela, respeitando a hierarquia
+do cliente mesmo com os pesos somados. Os pesos ficam centralizados em
+`src/transform.py` (`SCORE_WEIGHTS`/`SCORE_HOT`/`SCORE_WARM`) — recalibrar é mexer
+em três números, sem reescrever lógica.
+
+O score entra em **dois lugares**, pela mesma regra (funções puras compartilhadas):
+
+- **Camada curada** — colunas `listing_intent`, `lead_score`, `lead_temperature`
+  no `leads_clean` (base para o dashboard).
+- **Trello** — o card recebe uma **etiqueta de temperatura** (🔥 Quente / 🌤️ Morno /
+  ❄️ Frio), calculada on-the-fly na carga, para priorização visual no funil.
+
+```powershell
+python -m src.transform   # reconstrói leads_clean já com o score + resumo por temperatura
+```
 
 ---
 
@@ -245,15 +282,17 @@ leads/dia) e mantém a curada sempre coerente com a crua.
 
 1. Pegue sua **key** e **token** em https://trello.com/app-key e preencha
    `TRELLO_API_KEY` / `TRELLO_API_TOKEN` no `.env`.
-2. Crie/garanta o quadro, as listas do funil e as etiquetas de origem (idempotente):
+2. Crie/garanta o quadro, as listas do funil e as etiquetas — de **origem** (por
+   portal) e de **temperatura** (lead scoring) — de forma idempotente:
 
    ```powershell
    python -m src.trello setup    # cria quadro + funil + etiquetas; imprime os IDs
    ```
 
-   Copie os IDs sugeridos (`TRELLO_LIST_ID`, `TRELLO_LABEL_WIMOVEIS`,
-   `TRELLO_LABEL_DFIMOVEIS`) para o `.env` — cada origem entra no card com a sua
-   própria etiqueta. Comandos auxiliares:
+   Copie os IDs sugeridos para o `.env`: `TRELLO_LIST_ID`, as de origem
+   (`TRELLO_LABEL_WIMOVEIS`, `TRELLO_LABEL_DFIMOVEIS`) e as de temperatura
+   (`TRELLO_LABEL_QUENTE`, `TRELLO_LABEL_MORNO`, `TRELLO_LABEL_FRIO`) — cada card
+   recebe a etiqueta da sua origem **e** a da sua temperatura. Comandos auxiliares:
 
    ```powershell
    python -m src.trello check    # valida key/token (mostra o usuário autenticado)
@@ -331,6 +370,7 @@ Duas tabelas no DuckDB.
 | `uf`, `regiao` | Unidade federativa e região, derivadas do DDD |
 | `transaction_type`, `portal_temperature`, `lead_origin`, `is_destaque` | Campos garimpados do `raw_payload` |
 | `person_key`, `is_primary`, `is_duplicate`, `cross_portal` | Dedup de identidade: chave da pessoa, primário vs. duplicado e se cruza portais |
+| `listing_intent`, `lead_score`, `lead_temperature` | Lead scoring (Fase 3): tem intenção num anúncio, pontuação 0–100 e temperatura (Quente/Morno/Frio) |
 
 > É reconstruída inteira a cada `python -m src.transform` — não há estado parcial.
 
@@ -361,6 +401,14 @@ Duas tabelas no DuckDB.
   `(source, external_id)`, a camada curada resolve a *mesma pessoa* por telefone/
   e-mail normalizados (E.164), marcando duplicados e o cruzamento entre portais
   (entity-resolution-lite) — sem isso, um lead repetido vira dois cards.
+- **Lead scoring baseado em regras, com a rubrica do cliente**: a hierarquia
+  (intenção num anúncio > telefone > e-mail) e os pesos foram definidos pelo
+  *negócio* e ficam centralizados (`SCORE_WEIGHTS`) para recalibrar sem tocar na
+  lógica. Regras (não ML) porque o volume é baixo e não há histórico rotulado para
+  treinar; o piso da "intenção" é maior que a soma dos demais sinais, garantindo a
+  ordem do cliente mesmo somando os pesos. A pontuação alimenta tanto a camada
+  curada quanto a etiqueta de temperatura no Trello, pela **mesma função pura** —
+  os dois caminhos não divergem.
 - **Carga no Trello idempotente e best-effort**: o vínculo fica no banco; falha
   ao criar um card não derruba o webhook nem os demais leads — a próxima carga
   reenvia os pendentes.
@@ -384,15 +432,16 @@ Duas tabelas no DuckDB.
 
 ```powershell
 pip install -r requirements-dev.txt
-pytest                      # 40 testes, isolados de serviços externos
+pytest                      # 46 testes, isolados de serviços externos
 ```
 
 Cobre a ingestão dos dois portais (health, validação de segredo, mapeamento de
 campos, dedup, payload inválido → caixa de revisão + `422`), o cliente da Navent
 (montagem do corpo de cadastro do callback), a carga no Trello (montagem do card,
-marcador de rastreio, idempotência e **consolidação da mesma pessoa num único
-card**) e a camada curada (normalização de telefone/e-mail, enriquecimento por
-DDD, garimpo do `raw_payload` e dedup entre portais).
+marcador de rastreio, idempotência, **consolidação da mesma pessoa num único
+card** e **etiqueta de temperatura**) e a camada curada (normalização de
+telefone/e-mail, enriquecimento por DDD, garimpo do `raw_payload`, dedup entre
+portais e **lead scoring** — hierarquia da rubrica e faixas de temperatura).
 
 ### Lint & CI
 

@@ -15,7 +15,14 @@ import requests
 
 from src.config import settings
 from src.db import carded_contacts, fetch_pending_leads, set_trello_card_id
-from src.transform import compute_person_key
+from src.transform import (
+    compute_person_key,
+    has_listing_intent,
+    normalize_email,
+    normalize_phone,
+    score_lead,
+    score_to_temperature,
+)
 
 _TRELLO_API = "https://api.trello.com/1"
 _TIMEOUT = 15
@@ -78,15 +85,48 @@ def _source_label_id(source: str) -> str | None:
     }.get(source) or None
 
 
+def _lead_temperature(lead: dict) -> str:
+    """Temperatura do lead (rubrica do cliente), computada on-the-fly na carga.
+
+    Usa as MESMAS funções puras do `leads_clean` (telefone/e-mail/listing_ref do
+    lead cru), então a etiqueta no card concorda com a coluna da camada curada —
+    sem depender do rebuild em lote.
+    """
+    ph = normalize_phone(lead.get("phone"))
+    em = normalize_email(lead.get("email"))
+    score = score_lead(
+        listing_intent=has_listing_intent(lead.get("listing_ref")),
+        phone_valid=ph["phone_valid"],
+        phone_is_mobile=ph["phone_is_mobile"],
+        email_valid=em["email_valid"],
+    )
+    return score_to_temperature(score)
+
+
+def _temp_label_id(temperature: str) -> str | None:
+    """ID da etiqueta de temperatura configurada no .env, se houver."""
+    return {
+        "Quente": getattr(settings, "trello_label_quente", ""),
+        "Morno": getattr(settings, "trello_label_morno", ""),
+        "Frio": getattr(settings, "trello_label_frio", ""),
+    }.get(temperature) or None
+
+
 def create_card(lead: dict) -> str:
     """Cria o card no Trello e devolve o id. Lança em erro de HTTP."""
     if not settings.trello_list_id:
         raise RuntimeError("TRELLO_LIST_ID não configurado no .env")
     # idLabels precisa ir na query string; no corpo (data) o Trello ignora.
     params = {**_auth(), "idList": settings.trello_list_id}
-    label_id = _source_label_id(lead["source"])
-    if label_id:
-        params["idLabels"] = label_id
+    # Etiqueta de origem (portal) + etiqueta de temperatura (lead scoring, Fase 3).
+    # Várias etiquetas vão separadas por vírgula na query.
+    label_ids = [
+        lid
+        for lid in (_source_label_id(lead["source"]), _temp_label_id(_lead_temperature(lead)))
+        if lid
+    ]
+    if label_ids:
+        params["idLabels"] = ",".join(label_ids)
     resp = requests.post(
         f"{_TRELLO_API}/cards",
         params=params,
@@ -207,6 +247,18 @@ PIPELINE = [
     "❌ Perdido",
 ]
 SOURCE_LABELS = {"Wimóveis": "blue", "DFImóveis": "green"}
+# Etiquetas de temperatura do lead (Fase 3 — scoring). A cor reforça a leitura no
+# quadro: vermelho = quente, laranja = morno, azul-claro = frio.
+TEMPERATURE_LABELS = {"🔥 Quente": "red", "🌤️ Morno": "orange", "❄️ Frio": "sky"}
+BOARD_LABELS = {**SOURCE_LABELS, **TEMPERATURE_LABELS}
+# Nome da etiqueta -> variável do .env que guarda o ID dela (para o CLI imprimir).
+_LABEL_ENV = {
+    "Wimóveis": "TRELLO_LABEL_WIMOVEIS",
+    "DFImóveis": "TRELLO_LABEL_DFIMOVEIS",
+    "🔥 Quente": "TRELLO_LABEL_QUENTE",
+    "🌤️ Morno": "TRELLO_LABEL_MORNO",
+    "❄️ Frio": "TRELLO_LABEL_FRIO",
+}
 
 
 def _find_workspace_id(name: str) -> str | None:
@@ -275,7 +327,7 @@ def _ensure_labels(board_id: str) -> dict:
     atuais.raise_for_status()
     por_nome = {item["name"]: item["id"] for item in atuais.json() if item.get("name")}
     ids = {}
-    for nome, cor in SOURCE_LABELS.items():
+    for nome, cor in BOARD_LABELS.items():
         if nome in por_nome:
             ids[nome] = por_nome[nome]
             continue
@@ -343,12 +395,15 @@ def _cli_setup() -> None:
     print("\nListas do funil:")
     for nome, lid in r["listas"].items():
         print(f"   {nome}  ->  {lid}")
-    print("\nEtiquetas de origem:")
+    print("\nEtiquetas (origem + temperatura):")
     for nome, lid in r["labels"].items():
         print(f"   {nome}  ->  {lid}")
     print("\n>>> Coloque no .env:")
     print(f"   TRELLO_LIST_ID={r['listas'].get('📥 Novos leads', '')}")
-    print(f"   TRELLO_LABEL_WIMOVEIS={r['labels'].get('Wimóveis', '')}")
+    for nome, lid in r["labels"].items():
+        env = _LABEL_ENV.get(nome)
+        if env:
+            print(f"   {env}={lid}")
 
 
 if __name__ == "__main__":

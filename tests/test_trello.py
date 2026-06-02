@@ -44,6 +44,43 @@ def test_create_card_envia_idlabels_na_query(monkeypatch):
     assert "name" in capturado["data"]
 
 
+def test_create_card_adiciona_etiqueta_de_temperatura(monkeypatch):
+    """Um lead quente (intenção num anúncio + telefone) deve sair com a etiqueta
+    de origem E a de temperatura — ambas via query, separadas por vírgula."""
+    fake = SimpleNamespace(
+        trello_list_id="LIST",
+        trello_label_wimoveis="LBL-W", trello_label_dfimoveis="LBL-D",
+        trello_label_quente="LBL-HOT", trello_label_morno="LBL-WARM", trello_label_frio="LBL-COLD",
+        trello_api_key="K", trello_api_token="T",
+    )
+    monkeypatch.setattr(trello, "settings", fake)
+
+    capturado = {}
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"id": "card1"}
+
+    def _fake_post(url, params=None, data=None, timeout=None):
+        capturado["params"] = params
+        return _Resp()
+
+    monkeypatch.setattr(trello.requests, "post", _fake_post)
+
+    lead = {
+        "source": "wimoveis", "external_id": "x", "name": "N", "email": "n@email.com",
+        "phone": "(61) 99999-8888", "message": None, "listing_ref": "AP-1",
+        "advertiser_code": None, "agency_code": None, "lead_date": None, "received_at": None,
+    }
+    trello.create_card(lead)
+    etiquetas = capturado["params"]["idLabels"].split(",")
+    assert "LBL-W" in etiquetas    # etiqueta de origem (Wimóveis)
+    assert "LBL-HOT" in etiquetas  # etiqueta de temperatura (lead com intenção = Quente)
+
+
 def _make_lead(ext: str) -> Lead:
     # Contato ÚNICO por ext (e-mail derivado) — senão a dedup de identidade veria
     # os dois leads como a mesma pessoa e criaria só um card.
