@@ -126,6 +126,21 @@ def fetch_pending_leads(limit: int = 50) -> list[dict]:
     return [dict(zip(_LEAD_COLS, row)) for row in rows]
 
 
+def carded_contacts() -> list[dict]:
+    """Contatos (telefone/e-mail) dos leads que já têm card no Trello.
+
+    Base para a dedup de identidade na carga: permite reconhecer que um lead novo
+    é a mesma pessoa de alguém já carregado (inclusive de outro portal).
+    """
+    con = get_connection()
+    rows = con.execute(
+        "SELECT source, external_id, phone, email, trello_card_id "
+        "FROM leads_raw WHERE trello_card_id IS NOT NULL;"
+    ).fetchall()
+    cols = ["source", "external_id", "phone", "email", "trello_card_id"]
+    return [dict(zip(cols, row)) for row in rows]
+
+
 def set_trello_card_id(source: str, external_id: str, card_id: str) -> None:
     """Marca o lead como já carregado no Trello (idempotência da Fase 4)."""
     con = get_connection()

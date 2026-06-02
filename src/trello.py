@@ -14,7 +14,8 @@ import sys
 import requests
 
 from src.config import settings
-from src.db import fetch_pending_leads, set_trello_card_id
+from src.db import carded_contacts, fetch_pending_leads, set_trello_card_id
+from src.transform import compute_person_key
 
 _TRELLO_API = "https://api.trello.com/1"
 _TIMEOUT = 15
@@ -96,19 +97,100 @@ def create_card(lead: dict) -> str:
     return resp.json()["id"]
 
 
+def add_comment(card_id: str, text: str) -> None:
+    """Adiciona um comentário ao card (usado ao consolidar leads duplicados)."""
+    resp = requests.post(
+        f"{_TRELLO_API}/cards/{card_id}/actions/comments",
+        params={**_auth(), "text": text},
+        timeout=_TIMEOUT,
+    )
+    resp.raise_for_status()
+
+
+def add_label(card_id: str, label_id: str) -> None:
+    """Adiciona uma etiqueta de origem ao card (idempotente do lado do Trello)."""
+    resp = requests.post(
+        f"{_TRELLO_API}/cards/{card_id}/idLabels",
+        params={**_auth(), "value": label_id},
+        timeout=_TIMEOUT,
+    )
+    resp.raise_for_status()
+
+
+def _dup_comment(lead: dict) -> str:
+    """Texto anexado ao card quando a mesma pessoa entra de novo (outro portal)."""
+    return "\n".join(
+        [
+            f"🔁 **Mesma pessoa também entrou via {_source_display(lead['source'])}** "
+            f"em {_fmt_dt(lead.get('received_at'))} — possível interesse mais quente.",
+            "",
+            f"💬 {lead.get('message') or '—'}",
+            "",
+            f"jare-ext:{lead['source']}:{lead['external_id']}",
+        ]
+    )
+
+
+def _link_to_existing_card(card_id: str, lead: dict) -> None:
+    """Consolida um lead duplicado no card já existente (comentário + etiqueta).
+
+    Best-effort: o vínculo no banco já foi gravado; comentário/etiqueta são extras
+    e uma falha aqui não deve interromper a carga dos demais leads.
+    """
+    try:
+        add_comment(card_id, _dup_comment(lead))
+        label_id = _source_label_id(lead["source"])
+        if label_id:
+            add_label(card_id, label_id)  # mostra que o card veio de 2 portais
+    except Exception as exc:  # noqa: BLE001 — vínculo já feito; isto é enriquecimento
+        print(f"[trello] vínculo ok, anexo falhou ({card_id}): {exc}", file=sys.stderr)
+
+
+def _carded_person_map() -> dict:
+    """Mapa `chave-da-pessoa -> card_id` dos leads que já têm card."""
+    mapa: dict[str, str] = {}
+    for c in carded_contacts():
+        chave = compute_person_key(c.get("phone"), c.get("email"))
+        if chave and chave not in mapa:
+            mapa[chave] = c["trello_card_id"]
+    return mapa
+
+
 def push_pending_leads(limit: int = 50) -> dict:
-    """Envia ao Trello os leads pendentes. Best-effort: falha em um não para os outros."""
+    """Envia ao Trello os leads pendentes. Best-effort: falha em um não para os outros.
+
+    Dedup de identidade: se um lead pendente é a MESMA pessoa (telefone/e-mail) de
+    alguém que já tem card — inclusive de OUTRO portal — não cria um 2º card.
+    Vincula ao card existente e anexa um comentário com a info do novo portal
+    ("uma pessoa, um card"). Processa do mais antigo pro mais novo, então o
+    primeiro lead da pessoa é o dono do card.
+    """
     pendentes = fetch_pending_leads(limit)
-    criados, falhas = 0, 0
+    por_pessoa = _carded_person_map()
+    criados = vinculados = falhas = 0
     for lead in pendentes:
         try:
+            chave = compute_person_key(lead.get("phone"), lead.get("email"))
+            if chave and chave in por_pessoa:
+                card_id = por_pessoa[chave]
+                set_trello_card_id(lead["source"], lead["external_id"], card_id)
+                _link_to_existing_card(card_id, lead)
+                vinculados += 1
+                continue
             card_id = create_card(lead)
             set_trello_card_id(lead["source"], lead["external_id"], card_id)
+            if chave:
+                por_pessoa[chave] = card_id
             criados += 1
         except Exception as exc:  # noqa: BLE001 — best-effort, segue para o próximo
             falhas += 1
             print(f"[trello] falha no lead {lead['external_id']}: {exc}", file=sys.stderr)
-    return {"pendentes": len(pendentes), "criados": criados, "falhas": falhas}
+    return {
+        "pendentes": len(pendentes),
+        "criados": criados,
+        "vinculados": vinculados,
+        "falhas": falhas,
+    }
 
 
 # ----------------------------------------------------------------------------
