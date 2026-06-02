@@ -45,8 +45,9 @@ def test_create_card_envia_idlabels_na_query(monkeypatch):
 
 
 def test_create_card_adiciona_etiqueta_de_temperatura(monkeypatch):
-    """Um lead quente (intenção num anúncio + telefone) deve sair com a etiqueta
-    de origem E a de temperatura — ambas via query, separadas por vírgula."""
+    """Lead quente (intenção num anúncio + telefone): a etiqueta de ORIGEM vai na
+    criação do card e a de TEMPERATURA é adicionada pelo endpoint dedicado (não
+    juntas por vírgula em idLabels, que o Trello recusa)."""
     fake = SimpleNamespace(
         trello_list_id="LIST",
         trello_label_wimoveis="LBL-W", trello_label_dfimoveis="LBL-D",
@@ -55,7 +56,7 @@ def test_create_card_adiciona_etiqueta_de_temperatura(monkeypatch):
     )
     monkeypatch.setattr(trello, "settings", fake)
 
-    capturado = {}
+    posts = []
 
     class _Resp:
         def raise_for_status(self):
@@ -65,7 +66,7 @@ def test_create_card_adiciona_etiqueta_de_temperatura(monkeypatch):
             return {"id": "card1"}
 
     def _fake_post(url, params=None, data=None, timeout=None):
-        capturado["params"] = params
+        posts.append({"url": url, "params": params})
         return _Resp()
 
     monkeypatch.setattr(trello.requests, "post", _fake_post)
@@ -75,10 +76,14 @@ def test_create_card_adiciona_etiqueta_de_temperatura(monkeypatch):
         "phone": "(61) 99999-8888", "message": None, "listing_ref": "AP-1",
         "advertiser_code": None, "agency_code": None, "lead_date": None, "received_at": None,
     }
-    trello.create_card(lead)
-    etiquetas = capturado["params"]["idLabels"].split(",")
-    assert "LBL-W" in etiquetas    # etiqueta de origem (Wimóveis)
-    assert "LBL-HOT" in etiquetas  # etiqueta de temperatura (lead com intenção = Quente)
+    assert trello.create_card(lead) == "card1"
+
+    # 1º POST: cria o card já com a etiqueta de ORIGEM
+    assert posts[0]["url"].endswith("/cards")
+    assert posts[0]["params"]["idLabels"] == "LBL-W"
+    # 2º POST: adiciona a etiqueta de TEMPERATURA (lead quente) pelo endpoint dedicado
+    assert posts[1]["url"].endswith("/cards/card1/idLabels")
+    assert posts[1]["params"]["value"] == "LBL-HOT"
 
 
 def _make_lead(ext: str) -> Lead:
