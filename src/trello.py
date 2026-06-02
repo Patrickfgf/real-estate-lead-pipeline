@@ -113,20 +113,21 @@ def _temp_label_id(temperature: str) -> str | None:
 
 
 def create_card(lead: dict) -> str:
-    """Cria o card no Trello e devolve o id. Lança em erro de HTTP."""
+    """Cria o card no Trello e devolve o id. Lança em erro de HTTP.
+
+    A etiqueta de ORIGEM (portal) vai já na criação (idLabels na query). A de
+    TEMPERATURA (lead scoring, Fase 3) é adicionada num segundo passo, pelo
+    endpoint dedicado de etiquetas: passar várias etiquetas separadas por vírgula
+    em `idLabels` não é confiável (a vírgula vira %2C e o Trello recusa o conjunto
+    inteiro — o card sairia sem nenhuma etiqueta).
+    """
     if not settings.trello_list_id:
         raise RuntimeError("TRELLO_LIST_ID não configurado no .env")
     # idLabels precisa ir na query string; no corpo (data) o Trello ignora.
     params = {**_auth(), "idList": settings.trello_list_id}
-    # Etiqueta de origem (portal) + etiqueta de temperatura (lead scoring, Fase 3).
-    # Várias etiquetas vão separadas por vírgula na query.
-    label_ids = [
-        lid
-        for lid in (_source_label_id(lead["source"]), _temp_label_id(_lead_temperature(lead)))
-        if lid
-    ]
-    if label_ids:
-        params["idLabels"] = ",".join(label_ids)
+    source_label = _source_label_id(lead["source"])
+    if source_label:
+        params["idLabels"] = source_label
     resp = requests.post(
         f"{_TRELLO_API}/cards",
         params=params,
@@ -134,7 +135,17 @@ def create_card(lead: dict) -> str:
         timeout=_TIMEOUT,
     )
     resp.raise_for_status()
-    return resp.json()["id"]
+    card_id = resp.json()["id"]
+
+    # Etiqueta de temperatura: best-effort. O card já existe; uma falha aqui não
+    # pode derrubar a carga (senão o lead fica pendente e a próxima carga duplica).
+    temp_label = _temp_label_id(_lead_temperature(lead))
+    if temp_label:
+        try:
+            add_label(card_id, temp_label)
+        except Exception as exc:  # noqa: BLE001 — etiqueta é enriquecimento, card já criado
+            print(f"[trello] card criado, etiqueta de temperatura falhou ({card_id}): {exc}", file=sys.stderr)
+    return card_id
 
 
 def add_comment(card_id: str, text: str) -> None:
