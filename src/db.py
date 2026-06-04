@@ -85,6 +85,20 @@ def ping() -> None:
         con.execute("SELECT 1").fetchone()
 
 
+def close() -> None:
+    """Fecha a conexão singleton e libera o arquivo do banco.
+
+    Útil quando outro componente do MESMO processo precisa reabrir o DuckDB em
+    modo read-only logo depois (ex.: o dashboard faz um seed em processo e então
+    lê o arquivo) — a conexão de escrita precisa soltar o lock antes.
+    """
+    global _con
+    with _lock:
+        if _con is not None:
+            _con.close()
+            _con = None
+
+
 def insert_lead(lead: Lead) -> bool:
     """Insere o lead. Retorna True se gravou, False se já existia (dedup).
 
