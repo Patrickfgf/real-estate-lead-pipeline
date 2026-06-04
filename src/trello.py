@@ -10,6 +10,7 @@ CLI (útil pra configurar e testar com credenciais reais):
     python -m src.trello push      # envia ao Trello os leads pendentes no banco
 """
 import sys
+import threading
 
 import requests
 
@@ -26,6 +27,16 @@ from src.transform import (
 
 _TRELLO_API = "https://api.trello.com/1"
 _TIMEOUT = 15
+
+# Serializa a carga inteira. `push_pending_leads` é uma sequência ler→criar→marcar
+# que dispara a cada webhook (via threadpool): sem este lock, dois leads quase
+# simultâneos veem o mesmo pendente com card NULL e ambos criam card — furando a
+# garantia "uma pessoa, um card" sob rajada. É um lock SEPARADO do `_lock` do DuckDB
+# (db.py) para não bloquear os inserts. No volume do projeto o custo é nulo.
+# NOTA (Fase 6/VPS): sob múltiplos workers/processos um lock de processo não basta —
+# aí `create_card` precisa virar idempotente de verdade (buscar o card pelo marcador
+# jare-ext via Trello search antes de criar).
+_push_lock = threading.Lock()
 
 
 def _auth() -> dict:
@@ -266,32 +277,33 @@ def push_pending_leads(limit: int = 50) -> dict:
     ("uma pessoa, um card"). Processa do mais antigo pro mais novo, então o
     primeiro lead da pessoa é o dono do card.
     """
-    pendentes = fetch_pending_leads(limit)
-    por_pessoa = _carded_person_map()
-    criados = vinculados = falhas = 0
-    for lead in pendentes:
-        try:
-            chave = compute_person_key(lead.get("phone"), lead.get("email"))
-            if chave and chave in por_pessoa:
-                card_id = por_pessoa[chave]
+    with _push_lock:  # serializa a carga: ler pendentes → criar/vincular → marcar
+        pendentes = fetch_pending_leads(limit)
+        por_pessoa = _carded_person_map()
+        criados = vinculados = falhas = 0
+        for lead in pendentes:
+            try:
+                chave = compute_person_key(lead.get("phone"), lead.get("email"))
+                if chave and chave in por_pessoa:
+                    card_id = por_pessoa[chave]
+                    set_trello_card_id(lead["source"], lead["external_id"], card_id)
+                    _link_to_existing_card(card_id, lead)
+                    vinculados += 1
+                    continue
+                card_id = create_card(lead)
                 set_trello_card_id(lead["source"], lead["external_id"], card_id)
-                _link_to_existing_card(card_id, lead)
-                vinculados += 1
-                continue
-            card_id = create_card(lead)
-            set_trello_card_id(lead["source"], lead["external_id"], card_id)
-            if chave:
-                por_pessoa[chave] = card_id
-            criados += 1
-        except Exception as exc:  # noqa: BLE001 — best-effort, segue para o próximo
-            falhas += 1
-            print(f"[trello] falha no lead {lead['external_id']}: {exc}", file=sys.stderr)
-    return {
-        "pendentes": len(pendentes),
-        "criados": criados,
-        "vinculados": vinculados,
-        "falhas": falhas,
-    }
+                if chave:
+                    por_pessoa[chave] = card_id
+                criados += 1
+            except Exception as exc:  # noqa: BLE001 — best-effort, segue para o próximo
+                falhas += 1
+                print(f"[trello] falha no lead {lead['external_id']}: {exc}", file=sys.stderr)
+        return {
+            "pendentes": len(pendentes),
+            "criados": criados,
+            "vinculados": vinculados,
+            "falhas": falhas,
+        }
 
 
 # ----------------------------------------------------------------------------

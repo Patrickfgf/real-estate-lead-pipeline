@@ -12,6 +12,7 @@ e guardam por até 14 dias em caso de falha).
 
 Doc: https://developers.grupozap.com/webhooks/integration_leads.html
 """
+import hmac
 import json
 import logging
 from datetime import datetime
@@ -40,7 +41,9 @@ def _check_secret(header_token: str | None, query_token: str | None) -> None:
     secret = settings.dfimoveis_webhook_secret
     if not secret:
         return
-    if secret not in (header_token, query_token):
+    # Comparação constant-time (hmac.compare_digest): evita um timing oracle que
+    # deixaria adivinhar o segredo byte a byte pelo tempo de resposta do `==`.
+    if not any(t is not None and hmac.compare_digest(secret, t) for t in (header_token, query_token)):
         raise HTTPException(status_code=401, detail="Segredo do webhook inválido")
 
 

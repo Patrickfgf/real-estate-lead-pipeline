@@ -149,12 +149,17 @@ python start.py
 ```
 
 - **Swagger (docs interativas):** http://localhost:8000/docs
-- **Health check:** http://localhost:8000/health
+- **Health check:** http://localhost:8000/health — *deep check*: confirma que o
+  DuckDB responde (responde **503** se o banco estiver inacessível, para um monitor
+  externo não dar "verde" com o banco caído)
 - **Webhook Wimóveis:** `POST /webhook/wimoveis` (callback `CONTACTO` da Navent)
 - **Webhook DFImóveis:** `POST /webhook/dfimoveis` (padrão VrSync do GrupoZAP/OLX)
 
-Ambas as rotas aceitam o segredo via header (`x-webhook-token`) ou query (`?token=`);
-sem segredo configurado no `.env`, rodam em **modo dev** (validação pulada).
+Ambas as rotas aceitam o segredo via header (`x-webhook-token`) ou query (`?token=`),
+comparado em **tempo constante** (`hmac.compare_digest`, anti-timing). Sem segredo
+configurado no `.env` rodam em **modo dev** (validação pulada) — e o servidor emite um
+**WARNING no boot** avisando que está em modo aberto, para o esquecimento de um segredo
+nunca passar despercebido em produção.
 
 ---
 
@@ -219,8 +224,9 @@ O projeto separa **camada crua** de **camada curada** (padrão raw → curated):
 O transform (`src/transform.py`) faz, com funções puras e testadas:
 
 - **Telefone (padrão BR):** tira a máscara, trata DDD e código de país (+55),
-  classifica fixo vs. celular e gera o formato **E.164** (`+5561999998888`) — o
-  que também serve de chave para o dedup.
+  **valida o DDD contra a tabela oficial (Anatel)** — rejeitando 0800, ramais e
+  números internacionais que se disfarçariam de telefone BR — classifica fixo vs.
+  celular e gera o formato **E.164** (`+5561999998888`), que também é a chave do dedup.
 - **E-mail:** normaliza (minúsculas/trim), valida o formato e extrai o domínio.
 - **Nome:** colapsa espaços e capitaliza, mantendo partículas (`de`/`da`/`do`).
 - **Geografia:** do DDD deriva **UF** e **região** (ex.: 61 → DF / Centro-Oeste).
@@ -382,7 +388,9 @@ Duas tabelas no DuckDB.
 ## Decisões de engenharia
 
 - **Ingestão event-driven** via webhook (push), com validação de segredo
-  compartilhado (header ou query) — sem segredo configurado, cai em modo dev.
+  compartilhado (header ou query) comparada em **tempo constante**
+  (`hmac.compare_digest`, evita timing oracle) — sem segredo configurado cai em modo
+  dev, e o boot emite um WARNING de "modo aberto" (fail-open visível, não silencioso).
 - **Contrato validado com Pydantic**: dois schemas crus (`WimoveisContato` para o
   callback CONTACTO da Navent, `VrSyncLead` para o padrão VrSync da DFImóveis)
   normalizados para um **lead canônico** (`Lead`) único; aliases mapeiam o
@@ -396,6 +404,12 @@ Duas tabelas no DuckDB.
   sem leitura prévia (sem condição de corrida).
 - **DuckDB single-writer**: conexão única serializada por `threading.Lock`,
   adequada ao volume (alguns leads/dia) e simples de operar.
+- **Carga no Trello serializada (`_push_lock`)**: `push_pending_leads` é uma sequência
+  ler→criar→marcar que dispara a cada webhook; um lock dedicado (separado do lock do
+  banco) garante "uma pessoa, um card" também sob **rajada de leads concorrentes** —
+  sem ele, dois leads quase simultâneos abririam dois cards.
+- **Healthcheck profundo**: `/health` toca o DuckDB (não é estático), devolvendo 503
+  quando o banco está inacessível — liveness do caminho de escrita, não só do processo.
 - **Camada crua vs. curada (raw → curated)**: `leads_raw` preserva o payload
   exato (auditoria); `leads_clean` é derivada por um transform em **pandas**,
   reconstruível e idempotente. Separa o que foi *recebido* do que foi *tratado* —
@@ -437,16 +451,18 @@ Duas tabelas no DuckDB.
 
 ```powershell
 pip install -r requirements-dev.txt
-pytest                      # 49 testes, isolados de serviços externos
+pytest                      # 52 testes, isolados de serviços externos
 ```
 
-Cobre a ingestão dos dois portais (health, validação de segredo, mapeamento de
-campos, dedup, payload inválido → caixa de revisão + `422`), o cliente da Navent
-(montagem do corpo de cadastro do callback), a carga no Trello (montagem do card,
-marcador de rastreio, idempotência, **consolidação da mesma pessoa num único
-card** e **etiqueta de temperatura**) e a camada curada (normalização de
-telefone/e-mail, enriquecimento por DDD, garimpo do `raw_payload`, dedup entre
-portais e **lead scoring** — hierarquia da rubrica e faixas de temperatura).
+Cobre a ingestão dos dois portais (health *deep check*, validação de segredo,
+mapeamento de campos, dedup, payload inválido → caixa de revisão + `422`), o cliente
+da Navent (montagem do corpo de cadastro do callback), a carga no Trello (montagem do
+card, marcador de rastreio, idempotência, **consolidação da mesma pessoa num único
+card**, **carga concorrente serializada** — sem card duplicado sob rajada — e
+**etiqueta de temperatura**) e a camada curada (normalização de telefone/e-mail,
+**validação de DDD** (0800/internacional → inválido), enriquecimento por DDD, garimpo
+do `raw_payload`, **dedup determinístico** entre portais e **lead scoring** —
+hierarquia da rubrica e faixas de temperatura).
 
 ### Lint & CI
 

@@ -17,7 +17,9 @@ SAMPLE = json.loads(_SAMPLE_PATH.read_text(encoding="utf-8"))
 def test_health():
     resp = client.get("/health")
     assert resp.status_code == 200
-    assert resp.json()["status"] == "ok"
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["db"] == "ok"  # deep check: o /health tocou o DuckDB de verdade
 
 
 def test_rejeita_sem_segredo():

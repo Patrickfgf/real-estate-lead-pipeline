@@ -45,7 +45,12 @@ def normalize_phone(raw: str | None) -> dict:
         ddd, number = digits[:2], digits[2:]
 
     is_mobile = bool(number) and len(number) == 9 and number.startswith("9")
-    valid = ddd is not None and len(number) in (8, 9)
+    # Valida o DDD contra a tabela oficial (`_DDD_UF`, Anatel): rejeita 0800/0300,
+    # ramais e números internacionais cujos 2 primeiros dígitos não formam um DDD
+    # brasileiro real (ex.: um número US de 11 dígitos cairia como "DDD 14"). Exige
+    # ainda celular (9 díg.) começando com 9, ou fixo de 8 díg. Sem isso, telefone
+    # lixo era marcado como válido e contaminava o scoring e o `person_key` do dedup.
+    valid = (ddd in _DDD_UF) and bool(number) and (is_mobile or len(number) == 8)
     e164 = f"+55{ddd}{number}" if valid else None
     return {
         "phone_e164": e164,
@@ -136,7 +141,7 @@ _TX_PT = {"SELL": "Compra", "RENT": "Aluguel"}
 _DESTAQUE = {"DESTAQUE", "SUPER_DESTAQUE", "SUPERDESTAQUE", "TRIPLE", "PREMIUM", "TOP"}
 
 
-def extract_extras(raw_payload: str | None, source: str) -> dict:
+def extract_extras(raw_payload: str | None) -> dict:
     """Garimpa o `raw_payload` por campos úteis que não estão no lead canônico.
 
     - `transaction_type`: VrSync `transactionType` (SELL/RENT) → Compra/Aluguel
@@ -269,9 +274,7 @@ def enrich(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     phone = df["phone"].apply(normalize_phone).apply(pd.Series)
     email = df["email"].apply(normalize_email).apply(pd.Series)
-    extras = df.apply(
-        lambda r: extract_extras(r["raw_payload"], r["source"]), axis=1
-    ).apply(pd.Series)
+    extras = df["raw_payload"].apply(extract_extras).apply(pd.Series)
     df = pd.concat([df, phone, email, extras], axis=1)
 
     df["name_clean"] = df["name"].apply(clean_name)
@@ -320,7 +323,12 @@ def flag_duplicates(df: pd.DataFrame) -> pd.DataFrame:
     os demais ficam como duplicados. `cross_portal=True` quando o grupo tem mais
     de uma origem (a pessoa entrou no Wimóveis E na DFImóveis).
     """
-    df = df.sort_values("received_at", na_position="last").reset_index(drop=True)
+    # Desempate determinístico: `received_at` é o critério principal (o mais antigo
+    # vira o primário), mas quando dois leads da mesma pessoa empatam no instante
+    # (dois portais no mesmo segundo) ordenamos por (source, external_id) para que
+    # is_primary/is_duplicate não oscilem de um rebuild para o outro.
+    sort_cols = [c for c in ("received_at", "source", "external_id") if c in df.columns]
+    df = df.sort_values(sort_cols, na_position="last").reset_index(drop=True)
     df["person_key"] = df.apply(_person_key, axis=1)
     df["is_primary"] = True
     df["is_duplicate"] = False

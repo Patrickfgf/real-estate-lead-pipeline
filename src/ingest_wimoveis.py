@@ -4,6 +4,7 @@ Fluxo: a Navent faz POST do evento CONTACTO → valida o segredo → valida o
 payload (Pydantic) → normaliza para o lead canônico → grava no DuckDB
 (dedup por idEvento).
 """
+import hmac
 import json
 import logging
 from datetime import datetime
@@ -38,7 +39,9 @@ def _check_secret(header_token: str | None, query_token: str | None) -> None:
     secret = settings.wimoveis_webhook_secret
     if not secret:
         return
-    if secret not in (header_token, query_token):
+    # Comparação constant-time (hmac.compare_digest): evita um timing oracle que
+    # deixaria adivinhar o segredo byte a byte pelo tempo de resposta do `==`.
+    if not any(t is not None and hmac.compare_digest(secret, t) for t in (header_token, query_token)):
         raise HTTPException(status_code=401, detail="Segredo do webhook inválido")
 
 

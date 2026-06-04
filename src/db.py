@@ -74,6 +74,17 @@ def get_connection() -> duckdb.DuckDBPyConnection:
     return _con
 
 
+def ping() -> None:
+    """Liveness do caminho de escrita: confirma que o DuckDB responde a uma query.
+
+    Usado pelo /health para um deep check — um SELECT estático no app não prova que
+    o banco (onde TODA ingestão grava) está acessível. Levanta se a conexão falhar.
+    """
+    con = get_connection()
+    with _lock:
+        con.execute("SELECT 1").fetchone()
+
+
 def insert_lead(lead: Lead) -> bool:
     """Insere o lead. Retorna True se gravou, False se já existia (dedup).
 

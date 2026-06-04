@@ -2,9 +2,10 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 
-from src.db import get_connection
+from src.config import settings
+from src.db import get_connection, ping
 from src.ingest_dfimoveis import router as dfimoveis_router
 from src.ingest_wimoveis import router as wimoveis_router
 
@@ -21,7 +22,24 @@ logging.basicConfig(
 async def lifespan(app: FastAPI):
     # Garante que o banco e a tabela existam antes de aceitar requisições.
     get_connection()
-    logging.getLogger("jare").info("Projeto Jaré no ar — banco pronto.")
+    log = logging.getLogger("jare")
+    # Fail-open visível: se algum webhook subir SEM segredo, ele aceita qualquer POST
+    # (modo dev). Em produção isso é um buraco silencioso — então gritamos no boot.
+    abertos = [
+        nome
+        for nome, segredo in (
+            ("Wimóveis", settings.wimoveis_webhook_secret),
+            ("DFImóveis", settings.dfimoveis_webhook_secret),
+        )
+        if not segredo
+    ]
+    if abertos:
+        log.warning(
+            "ATENÇÃO: webhook(s) %s SEM segredo — rodando em MODO ABERTO (sem "
+            "autenticação). Defina o *_WEBHOOK_SECRET no .env antes de ir a produção.",
+            ", ".join(abertos),
+        )
+    log.info("Projeto Jaré no ar — banco pronto.")
     yield
 
 
@@ -35,5 +53,16 @@ app.include_router(dfimoveis_router)
 
 
 @app.get("/health", tags=["infra"])
-def health():
-    return {"status": "ok"}
+def health(response: Response):
+    """Deep check: prova que o DuckDB (onde toda ingestão grava) está vivo.
+
+    Um monitor externo que recebe 200 com o banco quebrado reportaria 'saudável'
+    enquanto 100% dos leads falham — por isso tocamos o banco de verdade.
+    """
+    try:
+        ping()
+    except Exception as exc:  # noqa: BLE001 — qualquer falha do banco = não-saudável
+        logging.getLogger("jare").exception("Healthcheck falhou: banco inacessível")
+        response.status_code = 503
+        return {"status": "degraded", "db": f"erro: {exc}"}
+    return {"status": "ok", "db": "ok"}

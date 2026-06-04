@@ -63,6 +63,20 @@ def test_phone_vazio():
     assert r["phone_e164"] is None
 
 
+def test_phone_0800_internacional_e_ddd_inexistente_sao_invalidos():
+    """Valida o DDD contra a tabela Anatel: 0800/0300, número internacional e DDD
+    inexistente NÃO podem virar telefone BR válido (senão furam scoring e dedup)."""
+    # 0800: os 2 primeiros dígitos ("08") não são um DDD real
+    assert normalize_phone("08001234567")["phone_valid"] is False
+    # número US (+1 415 555 2671): "14" é DDD de SP, mas o número (9 díg.) não começa
+    # com 9 → não é um celular BR válido
+    r_us = normalize_phone("+1 415 555 2671")
+    assert r_us["phone_valid"] is False
+    assert r_us["phone_e164"] is None
+    # DDD claramente inexistente
+    assert normalize_phone("00988887777")["phone_valid"] is False
+
+
 # --------------------------------------------------------------------------
 # normalize_email
 # --------------------------------------------------------------------------
@@ -112,7 +126,7 @@ def test_ddd_para_uf_e_regiao():
 # --------------------------------------------------------------------------
 def test_extras_dfimoveis_transacao_e_temperatura():
     payload = '{"transactionType": "SELL", "temperature": "Alta", "leadOrigin": "Grupo OLX"}'
-    r = extract_extras(payload, "dfimoveis")
+    r = extract_extras(payload)
     assert r["transaction_type"] == "Compra"
     assert r["portal_temperature"] == "Alta"
     assert r["lead_origin"] == "Grupo OLX"
@@ -120,14 +134,14 @@ def test_extras_dfimoveis_transacao_e_temperatura():
 
 
 def test_extras_wimoveis_destaque():
-    r = extract_extras('{"planoDePublicacao": "DESTAQUE"}', "wimoveis")
+    r = extract_extras('{"planoDePublicacao": "DESTAQUE"}')
     assert r["is_destaque"] is True
     assert r["transaction_type"] is None
 
 
 def test_extras_aluguel_e_payload_quebrado():
-    assert extract_extras('{"transactionType": "RENT"}', "dfimoveis")["transaction_type"] == "Aluguel"
-    quebrado = extract_extras("isto não é json", "wimoveis")
+    assert extract_extras('{"transactionType": "RENT"}')["transaction_type"] == "Aluguel"
+    quebrado = extract_extras("isto não é json")
     assert quebrado["transaction_type"] is None
     assert quebrado["is_destaque"] is False
 
@@ -200,6 +214,24 @@ def test_dedup_marca_primario_e_cross_portal():
     assert out.loc[1, "is_duplicate"] and out.loc[1, "cross_portal"]
     assert out.loc[0, "cross_portal"]  # o grupo inteiro é marcado como cross-portal
     assert out.loc[2, "is_primary"] and not out.loc[2, "cross_portal"]
+
+
+def test_dedup_desempate_deterministico_com_received_at_igual():
+    """Quando received_at empata (dois portais no mesmo instante), o primário é
+    estável entre rebuilds — desempata por (source, external_id), não pela ordem
+    física das linhas no banco."""
+    base = datetime(2026, 6, 1, 10, 0, tzinfo=_TZ)
+    linhas = [
+        {"source": "wimoveis", "external_id": "b", "received_at": base, "phone_valid": True,
+         "phone_e164": "+5561999998888", "email_valid": False, "email_clean": None},
+        {"source": "dfimoveis", "external_id": "a", "received_at": base, "phone_valid": True,
+         "phone_e164": "+5561999998888", "email_valid": False, "email_clean": None},
+    ]
+    prim_normal = flag_duplicates(pd.DataFrame(linhas))
+    prim_invertido = flag_duplicates(pd.DataFrame(list(reversed(linhas))))
+    chave = lambda out: out[out["is_primary"]]["external_id"].tolist()  # noqa: E731
+    # independente da ordem de entrada, o primário é o mesmo (dfimoveis/"a" ordena 1º)
+    assert chave(prim_normal) == chave(prim_invertido) == ["a"]
 
 
 # --------------------------------------------------------------------------
