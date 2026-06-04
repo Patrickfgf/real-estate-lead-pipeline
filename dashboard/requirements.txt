@@ -1,0 +1,8 @@
+# Dependências para HOSPEDAR o dashboard (Streamlit Community Cloud / Hugging Face).
+# O Community Cloud procura o requirements PRIMEIRO no diretório do app (dashboard/) e
+# usa ESTE, ignorando o requirements.txt enxuto da raiz (que é só o runtime de ingestão).
+# Inclui o core via -r + os extras do dashboard, então o deploy instala tudo.
+-r ../requirements.txt
+streamlit>=1.50,<2
+plotly>=5.22,<6
+faker>=25,<40
