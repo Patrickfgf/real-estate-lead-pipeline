@@ -47,6 +47,10 @@ class Settings:
     trello_label_quente: str = os.getenv("TRELLO_LABEL_QUENTE", "")
     trello_label_morno: str = os.getenv("TRELLO_LABEL_MORNO", "")
     trello_label_frio: str = os.getenv("TRELLO_LABEL_FRIO", "")
+    # Nomes do quadro / área de trabalho do Trello (usados pelo `setup`). Genéricos por
+    # padrão para o repositório público; em produção, defina os nomes reais no .env.
+    trello_workspace_name: str = os.getenv("TRELLO_WORKSPACE_NAME", "Leads CRM")
+    trello_board_name: str = os.getenv("TRELLO_BOARD_NAME", "Leads — Imobiliária")
 
 
 settings = Settings()

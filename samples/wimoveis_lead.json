@@ -2,7 +2,7 @@
   "idEvento": "evt-2026-0001-abc",
   "tipoEvento": "CONTACTO",
   "idTipoContacto": 1,
-  "codigoImobiliaria": "ELDORADO-DF",
+  "codigoImobiliaria": "IMOB-DF",
   "referencia": "AP-ASA-SUL-2Q-123",
   "dataRegistro": "2026-06-01T14:23:05.123-0300",
   "nome": "Maria Souza",
@@ -11,7 +11,7 @@
   "mensagem": "Tenho interesse no apartamento de 2 quartos na Asa Sul. Podemos agendar uma visita?",
   "planoDePublicacao": "DESTAQUE",
   "idContato": 987654,
-  "codigoInmobiliaria": "ELDORADO-DF",
+  "codigoInmobiliaria": "IMOB-DF",
   "codigoDoAnunciante": "CORRETOR-JARE-007",
   "userIdNavplat": "navplat-55512345",
   "cpf": null

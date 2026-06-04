@@ -15,12 +15,18 @@ dados demo automaticamente na 1ª execução (auto-seed). A fonte é o `DUCKDB_P
 (default data/demo.duckdb).
 """
 import os
+import sys
 
 import duckdb
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+
+# Garante a raiz do repo no sys.path para o `import src` (lazy, no auto-seed) funcionar
+# quando o Streamlit roda o app a partir de um subdiretório — ex.: Community Cloud, que
+# coloca dashboard/ no path, não a raiz do repositório.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 DB_PATH = os.getenv("DUCKDB_PATH", "data/demo.duckdb")
 SLA_MIN = 60  # meta de 1ª resposta (min) — bate com src.seed._SLA_MINUTES

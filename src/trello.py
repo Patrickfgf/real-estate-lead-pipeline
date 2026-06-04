@@ -309,8 +309,8 @@ def push_pending_leads(limit: int = 50) -> dict:
 # ----------------------------------------------------------------------------
 # Setup do quadro (infra como código): garante quadro + listas + etiquetas
 # ----------------------------------------------------------------------------
-WORKSPACE_NAME = "Leads Eldorado"
-BOARD_NAME = "Leads — Eldorado"
+WORKSPACE_NAME = settings.trello_workspace_name
+BOARD_NAME = settings.trello_board_name
 PIPELINE = [
     "📥 Novos leads",
     "📞 Em contato",
