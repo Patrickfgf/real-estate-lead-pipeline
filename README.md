@@ -345,8 +345,8 @@ temporais. Os gráficos são estáticos (matplotlib/seaborn) e já vêm **render
   `cloudflared tunnel --url http://localhost:8501` — e mande o link público.
 - **Hospedagem permanente:** o app **se auto-popula** (gera os dados demo na 1ª
   execução se o banco não existir), pronto para o **Streamlit Community Cloud**
-  (apontando para `dashboard/app.py`) ou para o **VPS** junto da API (Fase 6), atrás de
-  HTTPS + senha.
+  (entrypoint `dashboard/app.py`, deps em `dashboard/requirements.txt`) ou para o **VPS**
+  junto da API (Fase 6), atrás de HTTPS + senha. Passo a passo em **[`DEPLOY.md`](DEPLOY.md)**.
 
 ---
 
