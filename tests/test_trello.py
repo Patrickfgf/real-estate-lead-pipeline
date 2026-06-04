@@ -1,4 +1,6 @@
 """Testes da carga no Trello (Fase 4) — sem tocar na API real (mock)."""
+import threading
+import time
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -212,6 +214,40 @@ def test_dup_comment_menciona_portal_mensagem_e_marcador():
     assert "DFImóveis" in txt
     assert "quero visitar" in txt
     assert "jare-ext:dfimoveis:x9" in txt
+
+
+def test_push_pending_serializa_sob_concorrencia(monkeypatch):
+    """Dois push_pending_leads concorrentes (rajada de leads da mesma pessoa) NÃO
+    criam card duplicado: o _push_lock serializa ler→criar→marcar, então o segundo
+    lead é vinculado ao card do primeiro em vez de abrir um 2º — mesmo sob threads."""
+    base = datetime(2026, 6, 2, 9, 0, tzinfo=ZoneInfo("America/Sao_Paulo"))
+    # mesma pessoa nos dois portais (o telefone normaliza para o mesmo E.164)
+    insert_lead(Lead(external_id="conc-w", source="wimoveis", name="Bia Sá",
+                     email=None, phone="(61) 96666-4321", message="w",
+                     raw_payload="{}", received_at=base))
+    insert_lead(Lead(external_id="conc-d", source="dfimoveis", name="Bia Sá",
+                     email=None, phone="61966664321", message="d",
+                     raw_payload="{}", received_at=base + timedelta(minutes=1)))
+
+    criados = []
+
+    def slow_create(lead):
+        criados.append(lead["external_id"])
+        time.sleep(0.02)  # alarga a janela: sem o lock, os dois threads colidiriam
+        return f"card-{lead['external_id']}"
+
+    monkeypatch.setattr(trello, "create_card", slow_create)
+    monkeypatch.setattr(trello, "_link_to_existing_card", lambda cid, lead: None)
+
+    threads = [threading.Thread(target=trello.push_pending_leads) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # uma pessoa, um card: conc-w criado exatamente 1x; conc-d nunca cria card (vincula)
+    assert criados.count("conc-w") == 1
+    assert "conc-d" not in criados
 
 
 def test_push_nao_duplica_card_para_mesma_pessoa_entre_portais(monkeypatch):

@@ -1,10 +1,19 @@
-fastapi
-uvicorn[standard]
-requests
-pandas
-duckdb
-pytz
-python-dotenv
-streamlit
-plotly
-pydantic
+# Dependências de runtime do core (ingestão → DuckDB → camada curada/scoring → Trello).
+# Ranges com piso testado e teto no próximo major: builds reprodutíveis sem travar
+# patches de segurança/correção. O 1º install "fresco" acontece no go-live (VPS), então
+# fixar os majors evita que uma release nova de pandas/pydantic/duckdb quebre o deploy.
+#
+# O dashboard (Streamlit + Plotly) é um add-on faturável que vive numa branch separada
+# (feature/dashboard), fora do core — por isso não entra aqui e não pesa no CI.
+fastapi>=0.110,<1
+uvicorn[standard]>=0.27,<1
+requests>=2.31,<3
+pandas>=2.2,<3
+duckdb>=1.0,<2
+# NÃO REMOVER: o DuckDB exige pytz em runtime para converter colunas TIMESTAMPTZ
+# em datetime no fetchall()/fetchone() (ex.: fetch_pending_leads). Não há `import
+# pytz` no nosso código — a dependência é do DuckDB —, então parece morta num grep,
+# mas removê-la quebra a leitura de lead_date/received_at. Verificado empiricamente.
+pytz>=2024.1
+python-dotenv>=1.0,<2
+pydantic>=2.6,<3
