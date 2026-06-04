@@ -3,3 +3,5 @@
 pytest>=8.0,<9
 httpx>=0.27,<1
 ruff>=0.5
+# Gerador de dados sintéticos (src/seed.py) — usado nos testes do seed e na demo.
+faker>=25,<40

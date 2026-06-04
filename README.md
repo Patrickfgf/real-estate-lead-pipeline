@@ -50,7 +50,7 @@ revisão** (dead-letter) para inspeção e reprocessamento.
                        ▼                              ▼
                ┌───────────────┐            ┌──────────────────┐
                │  Trello        │            │  Dashboard        │
-               │  (1 card/lead) │            │  (Streamlit)      │  [planejado]
+               │  (1 card/lead) │            │  (Streamlit)      │  ✅ add-on
                └───────────────┘            └──────────────────┘
 ```
 
@@ -74,8 +74,10 @@ não passa na validação é guardado na **caixa de revisão** em vez de ser des
 | Integração (entrada) | **Navent Open API** (via `requests`) | Cadastra/gerencia o callback de leads do Wimóveis |
 | Config | **python-dotenv** | Variáveis de ambiente / segredos fora do código |
 | Lead scoring | **pandas** (regras) | Pontua a qualidade do lead (0–100) e classifica a temperatura (Quente/Morno/Frio) pela rubrica do cliente — vira etiqueta no card |
-| Testes | **pytest** + **httpx** (`TestClient`) | Testes de ingestão, transform e carga, isolados de serviços externos |
-| _Planejado (Fase 5)_ | **Streamlit**, **Plotly** | Dashboard e visualização |
+| Testes | **pytest** + **httpx** (`TestClient`) | Testes de ingestão, transform, carga e geração sintética, isolados de serviços externos |
+| Dashboard / DA (Fase 5) | **Streamlit** + **Plotly** | Dashboard analítico sobre a camada curada (add-on) — KPIs, funil de conversão, SLA e recortes por origem/corretor/operação |
+| Dados de demonstração | **Faker** | Gerador sintético (`src/seed.py`) que popula o **pipeline real** para a demo e a EDA |
+| Análise exploratória | **Jupyter** + **matplotlib** / **seaborn** | Notebook de EDA (`notebooks/eda.ipynb`) com gráficos estáticos que renderizam no GitHub |
 
 ---
 
@@ -91,14 +93,15 @@ não passa na validação é guardado na **caixa de revisão** em vez de ser des
 | 4 | Carga no Trello (1 card por lead, idempotente) + setup do quadro como código | ✅ |
 | 2 | Limpeza / enriquecimento → camada curada `leads_clean` (pandas) + dedup entre portais | ✅ |
 | 3 | Lead scoring (qualidade do lead → temperatura Quente/Morno/Frio + etiqueta no Trello) | ✅ |
-| 5 | Dashboard Streamlit | ⬜ |
+| 5 | Dashboard Streamlit + análise exploratória (EDA) — add-on de Data Analysis | ✅ |
 | 6 | Orquestração / deploy | ⬜ |
 
 > A **Fase 4 foi antecipada** para fechar uma fatia vertical — *lead entra → card
 > sai no Trello* — e entregar valor cedo. A **Fase 2** (limpeza/enriquecimento)
 > construiu a camada curada `leads_clean`, base analítica do projeto, e a **Fase 3**
-> (lead scoring) já pontua e classifica cada lead. O próximo salto é o **dashboard**
-> (Fase 5), consumindo a camada curada.
+> (lead scoring) já pontua e classifica cada lead. A **Fase 5** entregou o
+> **dashboard** (add-on de Data Analysis) e o **notebook de EDA** sobre a camada
+> curada; o que falta é a **Fase 6** (orquestração/deploy).
 
 ---
 
@@ -115,6 +118,7 @@ não passa na validação é guardado na **caixa de revisão** em vez de ser des
 │   ├── navent.py            # Cliente da Navent Open API: cadastra o callback de leads (CLI)
 │   ├── trello.py            # Carga idempotente + setup do quadro (também é CLI)
 │   ├── transform.py         # Camada curada + lead scoring (pandas) → leads_clean (CLI)
+│   ├── seed.py              # Gerador de dados sintéticos (Faker) p/ a demo/EDA (CLI)
 │   └── main.py              # App FastAPI (monta as rotas + /health + logging)
 ├── tests/
 │   ├── conftest.py          # Isola os testes: DuckDB temporário, sem credenciais reais
@@ -122,16 +126,22 @@ não passa na validação é guardado na **caixa de revisão** em vez de ser des
 │   ├── test_ingest_dfimoveis.py
 │   ├── test_navent.py
 │   ├── test_trello.py
-│   └── test_transform.py    # Normalização (telefone/e-mail), enriquecimento e dedup
+│   ├── test_transform.py    # Normalização (telefone/e-mail), enriquecimento e dedup
+│   └── test_seed.py         # Gerador sintético: determinismo + monotonicidade do desfecho
 ├── samples/
 │   ├── wimoveis_lead.json   # Payload de exemplo (Wimóveis) para teste manual
 │   └── dfimoveis_lead.json  # Payload de exemplo (DFImóveis / VrSync) para teste manual
+├── dashboard/
+│   └── app.py               # Dashboard Streamlit (add-on Fase 5) sobre leads_clean
+├── notebooks/
+│   └── eda.ipynb            # Análise exploratória (EDA) com gráficos já renderizados
 ├── .github/workflows/ci.yml # CI: lint (ruff) + testes (pytest) em cada push/PR
 ├── start.py                 # Sobe o servidor (uvicorn, com reload)
 ├── testar_local.ps1         # Teste manual ponta a ponta (Windows / PowerShell)
 ├── ruff.toml                # Config do ruff (lint/format)
-├── requirements.txt
-├── requirements-dev.txt
+├── requirements.txt            # core (runtime de ingestão, enxuto)
+├── requirements-dev.txt        # testes/lint (+ Faker)
+├── requirements-dashboard.txt  # add-on do dashboard (Streamlit/Plotly) — inclui o core via -r
 └── .env.example
 ```
 
@@ -286,6 +296,60 @@ python -m src.transform   # reconstrói leads_clean já com o score + resumo por
 
 ---
 
+## Dashboard & análise — add-on de Data Analysis (Fase 5)
+
+Sobre a camada curada roda um **dashboard Streamlit** (peça de *Data Analysis*, feito
+como **add-on** numa branch dedicada). Como o repositório não versiona leads reais, um
+**gerador sintético** (Faker) popula o **pipeline de verdade** com um conjunto realista
+e reprodutível — e cria uma camada de **desfecho simulado** (funil, ganho/perdido,
+tempo de 1ª resposta) para o dashboard contar a história comercial completa.
+
+```powershell
+pip install -r requirements-dashboard.txt   # core + Streamlit/Plotly/Faker num comando
+python -m src.seed                           # gera ~600 leads demo em data/demo.duckdb
+streamlit run dashboard/app.py               # abre o dashboard em http://localhost:8501
+```
+
+> 🧪 **Dados simulados.** Os *atributos* dos leads passam pelo pipeline real
+> (ingestão → normalização → enriquecimento → dedup → scoring); o **desfecho**
+> (funil/conversão/SLA) é **simulado** em `src/seed.py` — o `leads_clean` ainda não
+> captura o desfecho do Trello. O app sinaliza isso num banner.
+
+**O que o dashboard mostra** (filtros por período, origem, temperatura e corretor):
+
+- **Visão geral** — volume no tempo por origem, mix de origem, pessoas por temperatura
+  (scoring) e distribuição do score.
+- **Operação** — Compra × Aluguel, leads por **corretor** e por **dia/hora** (para
+  dimensionar o plantão de resposta); a geografia entra como indicador compacto (a
+  corretora é de Brasília, o DF domina).
+- **Funil & conversão** — funil de 5 estágios e win-rate por origem/temperatura.
+- **SLA de resposta** — distribuição do tempo de 1ª resposta e o efeito de responder
+  dentro do SLA na conversão.
+
+O gerador é **reprodutível** (seed fixa) e grava num banco **isolado**
+(`data/demo.duckdb`, configurável por `--db`), sem tocar no banco operacional.
+
+### Análise exploratória (EDA)
+
+`notebooks/eda.ipynb` é uma EDA narrada sobre os mesmos dados: qualidade dos campos,
+origem/geografia, **validação empírica da rubrica de scoring** (todo lead com intenção
+pontua acima de todo lead sem ela), funil, efeito do tempo de resposta e padrões
+temporais. Os gráficos são estáticos (matplotlib/seaborn) e já vêm **renderizados** no
+`.ipynb` — abre direto no GitHub.
+
+### Mostrar para o cliente / hospedar
+
+- **Exportar:** cada gráfico tem "baixar PNG" na barra do Plotly; a página inteira vira
+  PDF por `Ctrl+P`.
+- **Demo ao vivo (rápida):** suba o app local e exponha com um túnel —
+  `cloudflared tunnel --url http://localhost:8501` — e mande o link público.
+- **Hospedagem permanente:** o app **se auto-popula** (gera os dados demo na 1ª
+  execução se o banco não existir), pronto para o **Streamlit Community Cloud**
+  (apontando para `dashboard/app.py`) ou para o **VPS** junto da API (Fase 6), atrás de
+  HTTPS + senha.
+
+---
+
 ## Configurar e testar o Trello
 
 1. Pegue sua **key** e **token** em https://trello.com/app-key e preencha
@@ -383,6 +447,11 @@ Duas tabelas no DuckDB.
 > É reconstruída inteira a cada ingestão (automático, best-effort) e sob demanda
 > via `python -m src.transform` — não há estado parcial.
 
+> **`lead_outcomes_demo`** (apenas demo) — criada por `python -m src.seed`, guarda o
+> **desfecho simulado** de cada pessoa (estágio no funil, ganho/perdido, tempo de 1ª
+> resposta) para alimentar o funil/SLA do dashboard. **Não** integra o pipeline de
+> produção: o desfecho real virá da captura do movimento dos cards no Trello.
+
 ---
 
 ## Decisões de engenharia
@@ -451,7 +520,7 @@ Duas tabelas no DuckDB.
 
 ```powershell
 pip install -r requirements-dev.txt
-pytest                      # 52 testes, isolados de serviços externos
+pytest                      # 60 testes, isolados de serviços externos
 ```
 
 Cobre a ingestão dos dois portais (health *deep check*, validação de segredo,
@@ -462,7 +531,9 @@ card**, **carga concorrente serializada** — sem card duplicado sob rajada — 
 **etiqueta de temperatura**) e a camada curada (normalização de telefone/e-mail,
 **validação de DDD** (0800/internacional → inválido), enriquecimento por DDD, garimpo
 do `raw_payload`, **dedup determinístico** entre portais e **lead scoring** —
-hierarquia da rubrica e faixas de temperatura).
+hierarquia da rubrica e faixas de temperatura). Cobre também o **gerador sintético**
+(`src/seed.py`): determinismo (mesma seed → mesmos dados) e **monotonicidade** do
+desfecho simulado (lead mais quente converte mais e é respondido mais rápido).
 
 ### Lint & CI
 

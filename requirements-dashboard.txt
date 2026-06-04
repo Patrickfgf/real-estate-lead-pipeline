@@ -1,0 +1,10 @@
+# Dependências do add-on DASHBOARD (Fase 5). Inclui o core via `-r`, então um único
+# comando instala tudo para rodar o dashboard + o gerador de dados sintéticos:
+#   pip install -r requirements-dashboard.txt
+# (O runtime de ingestão do VPS instala só o requirements.txt — estes extras ficam
+# de fora de propósito, para manter o servidor de webhooks enxuto.)
+-r requirements.txt
+streamlit>=1.50,<2
+plotly>=5.22,<6
+# Gerador de dados sintéticos (src/seed.py) que popula a demo do dashboard.
+faker>=25,<40
