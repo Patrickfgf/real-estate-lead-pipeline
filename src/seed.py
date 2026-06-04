@@ -56,7 +56,7 @@ _DDD_POOL = (
     + ["27"] * 2 + ["65"] * 2 + ["92"] * 1 + ["98"] * 1
 )
 
-# Pool pequeno e realista de corretores da Imobiliaria (uma corretora tem um punhado,
+# Pool pequeno e realista de corretores fictícios (uma corretora tem um punhado,
 # não centenas) — dá sentido à visão "leads/conversão por corretor" no dashboard.
 CORRETORES = [
     "Ana Ribeiro", "Bruno Carvalho", "Carla Nunes",
@@ -173,7 +173,7 @@ def _make_lead(
     external_id = f"{source}-{received_at:%Y%m}-{seq:05d}-{rng.randint(1000, 9999)}"
     lead_date = received_at
     advertiser = rng.choice(CORRETORES)  # corretor que recebeu o lead
-    agency = "IMOB"
+    agency = "IMOB-DF"
     tx = rng.choice(["SELL", "SELL", "RENT"])  # operação do anúncio (compra/aluguel)
 
     if source == "wimoveis":
