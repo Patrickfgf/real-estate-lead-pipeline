@@ -1,6 +1,7 @@
 # Projeto Jaré — Pipeline de Ingestão de Leads Imobiliários
 
 [![CI](https://github.com/Patrickfgf/real-estate-lead-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/Patrickfgf/real-estate-lead-pipeline/actions/workflows/ci.yml)
+[![Demo ao vivo](https://img.shields.io/badge/demo-live-FF4B4B?logo=streamlit&logoColor=white)](https://real-estate-lead-pipeline-7jjxw8u3fnlwrzk63prwxq.streamlit.app/)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
@@ -21,11 +22,11 @@
 > pandas · Trello API · Streamlit · Plotly · Faker · pytest · Ruff · GitHub Actions.
 > *(Full documentation below, in Portuguese.)*
 
-**📓 [Ver a EDA renderizada (nbviewer)](https://nbviewer.org/github/Patrickfgf/real-estate-lead-pipeline/blob/main/notebooks/eda.ipynb)** &nbsp;·&nbsp; 🔗 *Demo ao vivo: link após o deploy no Streamlit Cloud*
+**🔗 [Demo ao vivo (dashboard)](https://real-estate-lead-pipeline-7jjxw8u3fnlwrzk63prwxq.streamlit.app/)** &nbsp;·&nbsp; **📓 [EDA renderizada (nbviewer)](https://nbviewer.org/github/Patrickfgf/real-estate-lead-pipeline/blob/main/notebooks/eda.ipynb)**
 
 <p align="center">
-  <img src="docs/img/dashboard-visao-geral.png" alt="Dashboard de Data Analysis — visão geral dos leads" width="860">
-  <br><sub>Add-on de <b>Data Analysis</b> (Streamlit + Plotly) sobre a camada curada — <i>dados sintéticos de demonstração</i>.</sub>
+  <a href="https://real-estate-lead-pipeline-7jjxw8u3fnlwrzk63prwxq.streamlit.app/"><img src="docs/img/dashboard-visao-geral.png" alt="Dashboard de Data Analysis — visão geral dos leads" width="860"></a>
+  <br><sub>Add-on de <b>Data Analysis</b> (Streamlit + Plotly) sobre a camada curada — <i>dados sintéticos de demonstração</i>. <a href="https://real-estate-lead-pipeline-7jjxw8u3fnlwrzk63prwxq.streamlit.app/">Ver a demo ao vivo →</a></sub>
 </p>
 
 Pipeline de dados que **ingere leads de portais imobiliários** (**Wimóveis** via
