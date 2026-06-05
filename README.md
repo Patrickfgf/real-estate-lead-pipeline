@@ -1,6 +1,7 @@
 # Projeto Jaré — Pipeline de Ingestão de Leads Imobiliários
 
-[![CI](https://github.com/Patrickfgf/projeto-jare/actions/workflows/ci.yml/badge.svg)](https://github.com/Patrickfgf/projeto-jare/actions/workflows/ci.yml)
+[![CI](https://github.com/Patrickfgf/real-estate-lead-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/Patrickfgf/real-estate-lead-pipeline/actions/workflows/ci.yml)
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![Pydantic](https://img.shields.io/badge/Pydantic-E92063?logo=pydantic&logoColor=white)
@@ -8,6 +9,19 @@
 ![Trello API](https://img.shields.io/badge/Trello%20API-0052CC?logo=trello&logoColor=white)
 ![pytest](https://img.shields.io/badge/tested%20with-pytest-0A9EDC?logo=pytest&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)
+
+> **🇺🇸 English summary.** Event-driven **data pipeline** that ingests real-estate
+> leads from two Brazilian portals (**Wimóveis** via Navent's official callback,
+> **DFImóveis** via the VrSync webhook standard), validates and **deduplicates**
+> them (Pydantic + DuckDB, **raw → curated** layers in pandas, cross-portal entity
+> resolution), **scores** lead quality with business rules, and delivers each lead
+> as an idempotent **Trello** card plus a **Streamlit/Plotly** dashboard and a
+> Jupyter **EDA**. Invalid payloads are never dropped — they land in a
+> **dead-letter** review box. **Stack:** Python · FastAPI · Pydantic · DuckDB ·
+> pandas · Trello API · Streamlit · Plotly · Faker · pytest · Ruff · GitHub Actions.
+> *(Full documentation below, in Portuguese.)*
+
+**📓 [Ver a EDA renderizada (nbviewer)](https://nbviewer.org/github/Patrickfgf/real-estate-lead-pipeline/blob/main/notebooks/eda.ipynb)** &nbsp;·&nbsp; 🔗 *Demo ao vivo: link após o deploy no Streamlit Cloud*
 
 Pipeline de dados que **ingere leads de portais imobiliários** (**Wimóveis** via
 callback oficial da Navent e **DFImóveis** via webhook oficial padrão VrSync),

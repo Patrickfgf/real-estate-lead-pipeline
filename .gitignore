@@ -17,3 +17,6 @@ data/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# One-pager de portfólio (mantido fora do repo a pedido; serve ao CV, não ao código)
+Projeto_Jare_CV.html
