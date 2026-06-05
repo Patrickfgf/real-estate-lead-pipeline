@@ -23,6 +23,11 @@
 
 **📓 [Ver a EDA renderizada (nbviewer)](https://nbviewer.org/github/Patrickfgf/real-estate-lead-pipeline/blob/main/notebooks/eda.ipynb)** &nbsp;·&nbsp; 🔗 *Demo ao vivo: link após o deploy no Streamlit Cloud*
 
+<p align="center">
+  <img src="docs/img/dashboard-visao-geral.png" alt="Dashboard de Data Analysis — visão geral dos leads" width="860">
+  <br><sub>Add-on de <b>Data Analysis</b> (Streamlit + Plotly) sobre a camada curada — <i>dados sintéticos de demonstração</i>.</sub>
+</p>
+
 Pipeline de dados que **ingere leads de portais imobiliários** (**Wimóveis** via
 callback oficial da Navent e **DFImóveis** via webhook oficial padrão VrSync),
 valida, deduplica e persiste em **DuckDB** (camada crua), **limpa e enriquece**
@@ -340,6 +345,14 @@ streamlit run dashboard/app.py               # abre o dashboard em http://localh
 - **SLA de resposta** — distribuição do tempo de 1ª resposta e o efeito de responder
   dentro do SLA na conversão.
 
+<p align="center">
+  <img src="docs/img/dashboard-funil-conversao.png" alt="Funil de conversão e win-rate por origem e temperatura" width="760">
+  <br><sub><b>Funil &amp; conversão</b> — funil de 5 estágios e win-rate por origem/temperatura.</sub>
+  <br><br>
+  <img src="docs/img/dashboard-sla-resposta.png" alt="SLA de 1ª resposta e efeito na conversão" width="760">
+  <br><sub><b>SLA de resposta</b> — tempo até a 1ª resposta e seu efeito na conversão.</sub>
+</p>
+
 O gerador é **reprodutível** (seed fixa) e grava num banco **isolado**
 (`data/demo.duckdb`, configurável por `--db`), sem tocar no banco operacional.
 
@@ -349,7 +362,7 @@ O gerador é **reprodutível** (seed fixa) e grava num banco **isolado**
 origem/geografia, **validação empírica da rubrica de scoring** (todo lead com intenção
 pontua acima de todo lead sem ela), funil, efeito do tempo de resposta e padrões
 temporais. Os gráficos são estáticos (matplotlib/seaborn) e já vêm **renderizados** no
-`.ipynb` — abre direto no GitHub.
+`.ipynb` — abre direto no GitHub, ou pelo **[nbviewer](https://nbviewer.org/github/Patrickfgf/real-estate-lead-pipeline/blob/main/notebooks/eda.ipynb)**.
 
 ### Mostrar para o cliente / hospedar
 
