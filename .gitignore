@@ -12,6 +12,10 @@ data/
 *.eml
 *.msg
 
+# Documentos privados do cliente (prints, e-mails, contratos, anexos) — local-only.
+# Tudo nesta pasta fica na máquina e NUNCA vai para o repo público (anonimização).
+_private/
+
 # Jupyter
 .ipynb_checkpoints/
 

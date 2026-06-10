@@ -1,0 +1,48 @@
+# Projeto Jaré — API de ingestão de leads (FastAPI) no Fly.io.
+#
+# ⚠️ Secrets NÃO ficam aqui (este arquivo é versionado no repo público).
+#    Configure-os com `fly secrets set CHAVE=valor` — ver DEPLOY.md.
+#
+# Troque `app` por um nome único no Fly antes do primeiro deploy
+# (ou deixe o `fly launch` sugerir um).
+app = "jare-leads-api"
+primary_region = "gru"            # São Paulo: menor latência + dado no Brasil (LGPD)
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # APP_PORT NÃO vai aqui: o uvicorn de produção fixa --port 8000 no CMD do
+  # Dockerfile; o APP_PORT do .env só vale para o start.py de desenvolvimento.
+  TZ = "America/Sao_Paulo"
+  # O DuckDB (e TODOS os leads) vivem no volume persistente montado em /data.
+  DUCKDB_PATH = "/data/jare.duckdb"
+
+# Volume persistente: SEM isto, o banco some a cada redeploy/restart da máquina.
+# Crie uma vez com: fly volumes create jare_data --region gru --size 1
+[mounts]
+  source = "jare_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8000
+  force_https = true              # redireciona HTTP → HTTPS
+  # Webhook NÃO pode dormir: a Navent/DFImóveis fazem POST a qualquer hora. Manter
+  # 1 máquina sempre no ar evita perder/atrasar o 1º lead por cold-start.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  # Healthcheck profundo: /health toca o DuckDB (503 se o banco cair).
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    # 30s (não 10s): o 1º boot frio importa pandas + abre o DuckDB no volume montado;
+    # uma folga maior evita o Fly marcar a máquina como unhealthy antes de ela subir.
+    grace_period = "30s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"                # FastAPI + pandas + duckdb cabem no volume baixo

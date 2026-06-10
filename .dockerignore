@@ -1,0 +1,37 @@
+# O que NÃO entra na imagem de produção da API de ingestão.
+# Mantém a imagem pequena e — crucial — impede que segredos/dados vazem para o build.
+
+# Ambiente e caches locais
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Segredos e dados — NUNCA na imagem
+.env
+.env.*
+!.env.example
+data/
+_private/
+.streamlit/
+
+# Add-ons / material que a API de ingestão não usa em runtime
+dashboard/
+notebooks/
+tests/
+docs/
+samples/
+requirements-dev.txt
+requirements-dashboard.txt
+
+# Dev / docs / config que não pertencem ao runtime
+.git/
+.github/
+.devcontainer/
+*.md
+ruff.toml
+pytest.ini
+testar_local.ps1
+start.py
