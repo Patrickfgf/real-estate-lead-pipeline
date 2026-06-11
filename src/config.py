@@ -36,6 +36,9 @@ class Settings:
     # DFImóveis (webhook oficial — padrão VrSync, recebe POST)
     dfimoveis_webhook_secret: str = os.getenv("DFIMOVEIS_WEBHOOK_SECRET", "")
 
+    # Operação (endpoints /admin/* — fail-closed: vazio = endpoints desabilitados)
+    admin_token: str = os.getenv("ADMIN_TOKEN", "")
+
     # Trello
     trello_api_key: str = os.getenv("TRELLO_API_KEY", "")
     trello_api_token: str = os.getenv("TRELLO_API_TOKEN", "")
