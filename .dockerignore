@@ -1,0 +1,5 @@
+# Só src/ e requirements.txt entram na imagem — o resto é dev/demo/portfólio.
+*
+!requirements.txt
+!src/
+src/__pycache__/

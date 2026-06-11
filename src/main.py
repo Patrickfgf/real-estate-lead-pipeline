@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Response
 
+from src.admin import router as admin_router
 from src.config import settings
 from src.db import get_connection, ping
 from src.ingest_dfimoveis import router as dfimoveis_router
@@ -50,6 +51,7 @@ app = FastAPI(
 )
 app.include_router(wimoveis_router)
 app.include_router(dfimoveis_router)
+app.include_router(admin_router)
 
 
 @app.get("/health", tags=["infra"])
