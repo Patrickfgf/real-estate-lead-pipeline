@@ -1,0 +1,41 @@
+# Produção da API de ingestão de leads (Fly.io).
+#
+# Decisões que NÃO são ajuste fino — não mudar sem entender o porquê:
+#   • 1 máquina, sempre ligada: o DuckDB é single-writer num arquivo no volume
+#     (um volume só atacha numa máquina) e os portais entregam lead por push —
+#     máquina dormindo + timeout curto do portal = lead atrasado ou perdido.
+#     Deploy sempre com `fly deploy --ha=false` para o Fly não criar 2ª máquina.
+#   • Segredos (WIMOVEIS_WEBHOOK_SECRET, DFIMOVEIS_WEBHOOK_SECRET, TRELLO_*,
+#     NAVENT_*) vão via `fly secrets set`, nunca neste arquivo.
+
+app = "jare-leads"
+primary_region = "gru"
+
+[build]
+
+[env]
+  TZ = "America/Sao_Paulo"
+  DUCKDB_PATH = "/data/jare.duckdb"
+
+[[mounts]]
+  source = "jare_data"
+  destination = "/data"
+  # Snapshot diário do volume (retenção padrão de 5 dias) é o backup do banco.
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    timeout = "5s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
