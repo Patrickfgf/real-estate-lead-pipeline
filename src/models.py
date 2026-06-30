@@ -29,6 +29,7 @@ class WimoveisContato(BaseModel):
     referencia: str | None = None
     data_registro: str | None = Field(default=None, alias="dataRegistro")
     id_contato: int | None = Field(default=None, alias="idContato")
+    id_navplat: int | None = Field(default=None, alias="idnavplat")  # ID do aviso na Navent (o imóvel)
     codigo_imobiliaria: str | None = Field(default=None, alias="codigoImobiliaria")
     codigo_anunciante: str | None = Field(default=None, alias="codigoDoAnunciante")
     cpf: str | None = None

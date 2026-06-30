@@ -13,11 +13,13 @@ from src.db import get_connection, insert_lead
 from src.models import Lead
 from src.transform import (
     build_clean,
+    clean_message,
     clean_name,
     ddd_to_uf,
     extract_extras,
     flag_duplicates,
     has_listing_intent,
+    listing_url,
     normalize_email,
     normalize_phone,
     score_lead,
@@ -109,6 +111,39 @@ def test_clean_name_capitaliza_e_mantem_particulas():
 
 
 # --------------------------------------------------------------------------
+# clean_message — remove o boilerplate promocional que o imovelweb anexa
+# --------------------------------------------------------------------------
+def test_clean_message_remove_spam_imovelweb():
+    poluida = (
+        " Olá! Quero ser contatado sobre este imóvel em venda que vi em Wimoveis. "
+        "¡Após entrar em contato, peça que te avaliem! ¡Envie o seguinte link e seu "
+        "bom atendimento será refletido nos seus anúncios! "
+        "https://www.imovelweb.com.br/panel/feedback/400500600?utm_source=integracion"
+    )
+    assert (
+        clean_message(poluida)
+        == "Olá! Quero ser contatado sobre este imóvel em venda que vi em Wimoveis."
+    )
+
+
+def test_clean_message_preserva_texto_limpo():
+    limpa = "Tenho interesse no apartamento. Podemos agendar visita?"
+    assert clean_message(f"  {limpa}  ") == limpa
+
+
+def test_clean_message_none_e_so_espaco_viram_none():
+    assert clean_message(None) is None
+    assert clean_message("   ") is None
+
+
+def test_clean_message_preserva_exclamacao_espanhola_legitima():
+    # '¡' fora do boilerplate da Navent (lead que escreve em espanhol) NÃO é truncado —
+    # o corte ancora no marcador exato '¡Após'/'¡Después', não em qualquer '¡'.
+    msg = "¡Hola! Tengo interés en este inmueble."
+    assert clean_message(msg) == msg
+
+
+# --------------------------------------------------------------------------
 # enriquecimento geográfico
 # --------------------------------------------------------------------------
 def test_ddd_para_uf_e_regiao():
@@ -139,6 +174,11 @@ def test_extras_wimoveis_destaque():
     assert r["transaction_type"] is None
 
 
+def test_extras_wimoveis_destacado_es():
+    # a Navent manda 'destacado' (espanhol, minúsculo) no payload real do callback
+    assert extract_extras('{"planoDePublicacao": "destacado"}')["is_destaque"] is True
+
+
 def test_extras_aluguel_e_payload_quebrado():
     assert extract_extras('{"transactionType": "RENT"}')["transaction_type"] == "Aluguel"
     quebrado = extract_extras("isto não é json")
@@ -153,6 +193,32 @@ def test_has_listing_intent():
     assert has_listing_intent("AP-ASA-SUL-2Q-123") is True
     assert has_listing_intent("   ") is False
     assert has_listing_intent(None) is False
+
+
+# --------------------------------------------------------------------------
+# listing_url — link público do anúncio por portal
+# --------------------------------------------------------------------------
+def test_listing_url_wimoveis_monta_do_idnavplat():
+    assert (
+        listing_url("wimoveis", "3026198578")
+        == "https://www.wimoveis.com.br/propriedades/imovel-3026198578.html"
+    )
+
+
+def test_listing_url_wimoveis_codigo_alfanumerico_nao_vira_url():
+    # 'referencia' associada (código do CRM) não compõe a URL pública — só o idnavplat
+    assert listing_url("wimoveis", "AP-ASA-SUL-2Q-123") is None
+
+
+def test_listing_url_dfimoveis_pendente_retorna_none():
+    # o id interno do DFImóveis não vem no webhook — sem link até confirmar a fonte
+    assert listing_url("dfimoveis", "87027856") is None
+    assert listing_url("dfimoveis", "CASA-LAGO-SUL-3Q-456") is None
+
+
+def test_listing_url_sem_ref_retorna_none():
+    assert listing_url("wimoveis", None) is None
+    assert listing_url("wimoveis", "   ") is None
 
 
 def test_score_respeita_hierarquia_do_cliente():

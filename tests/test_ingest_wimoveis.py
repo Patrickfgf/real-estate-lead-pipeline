@@ -54,7 +54,7 @@ def test_dedup_mesmo_id_evento():
 
 
 def test_mapeamento_dos_campos_no_banco():
-    """Garante que o payload CONTACTO foi normalizado e gravado corretamente."""
+    """Garante que o payload CONTACTO_MENSAJE foi normalizado e gravado corretamente."""
     lead = {**SAMPLE, "idEvento": "evt-map-test"}
     client.post("/webhook/wimoveis", params={"token": SECRET}, json=lead)
 
@@ -72,7 +72,8 @@ def test_mapeamento_dos_campos_no_banco():
     assert name == SAMPLE["nome"]
     assert email == SAMPLE["email"]
     assert phone == SAMPLE["telefone"]
-    assert listing_ref == SAMPLE["referencia"]
+    # idnavplat (ID do aviso na Navent) é o vínculo com o imóvel — vira listing_ref.
+    assert listing_ref == str(SAMPLE["idnavplat"])
     assert advertiser == SAMPLE["codigoDoAnunciante"]
     assert agency == SAMPLE["codigoImobiliaria"]
     assert lead_date is not None and lead_date.tzinfo is not None  # dataRegistro parseado com fuso
@@ -89,8 +90,49 @@ def test_ingest_reconstroi_leads_clean_com_score():
         ["evt-clean-auto"],
     ).fetchone()
     assert row is not None  # leads_clean foi (re)construída automaticamente
-    assert row[0] == 100  # anúncio (referencia) + telefone celular + e-mail
+    assert row[0] == 100  # idnavplat (60) + telefone celular (30) + e-mail (10)
     assert row[1] == "Quente"
+
+
+def test_idnavplat_vira_listing_ref_quando_nao_ha_referencia():
+    """Sem 'referencia' (corretora não associou avisos), o idnavplat — ID do aviso
+    na Navent, sempre presente — é o vínculo com o imóvel e vira o listing_ref."""
+    lead = {**SAMPLE, "idEvento": "evt-navplat"}
+    assert "referencia" not in lead  # o payload real não traz referencia
+    client.post("/webhook/wimoveis", params={"token": SECRET}, json=lead)
+    row = get_connection().execute(
+        "SELECT listing_ref FROM leads_raw WHERE source='wimoveis' AND external_id=?",
+        ["evt-navplat"],
+    ).fetchone()
+    assert row[0] == str(SAMPLE["idnavplat"])
+
+
+def test_referencia_associada_tem_precedencia_sobre_idnavplat():
+    """Quando a corretora associou o aviso, vem 'referencia' (código legível do CRM):
+    ela tem precedência sobre o idnavplat numérico como listing_ref."""
+    lead = {**SAMPLE, "idEvento": "evt-ref", "referencia": "AP-ASA-SUL-2Q-123"}
+    client.post("/webhook/wimoveis", params={"token": SECRET}, json=lead)
+    row = get_connection().execute(
+        "SELECT listing_ref FROM leads_raw WHERE source='wimoveis' AND external_id=?",
+        ["evt-ref"],
+    ).fetchone()
+    assert row[0] == "AP-ASA-SUL-2Q-123"
+
+
+def test_mensagem_e_limpa_do_spam_na_ingestao():
+    """O boilerplate promocional do imovelweb não vai pro card (message limpa); o
+    texto original continua preservado no raw_payload (auditoria)."""
+    lead = {**SAMPLE, "idEvento": "evt-msg-limpa"}
+    client.post("/webhook/wimoveis", params={"token": SECRET}, json=lead)
+    row = get_connection().execute(
+        "SELECT message, raw_payload FROM leads_raw "
+        "WHERE source='wimoveis' AND external_id=?",
+        ["evt-msg-limpa"],
+    ).fetchone()
+    message, raw_payload = row
+    assert "¡" not in message and "panel/feedback" not in message
+    assert message == "Olá! Quero ser contatado sobre este imóvel em venda que vi em Wimoveis."
+    assert "panel/feedback" in raw_payload  # original preservado no cru
 
 
 def test_payload_invalido_retorna_422():

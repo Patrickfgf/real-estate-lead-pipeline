@@ -168,6 +168,18 @@ def test_card_desc_tem_marcador_de_rastreio():
     assert "jare-ext:wimoveis:abc-123" in desc
 
 
+def test_card_desc_mostra_link_do_anuncio_wimoveis():
+    """Quando o listing_ref é o idnavplat (numérico), o card traz o link clicável do
+    anúncio no Wimóveis em vez do número cru."""
+    lead = {
+        "source": "wimoveis", "external_id": "1", "name": "F", "email": None,
+        "phone": None, "message": None, "listing_ref": "3026198578",
+        "advertiser_code": None, "agency_code": None, "lead_date": None, "received_at": None,
+    }
+    desc = trello._card_desc(lead)
+    assert "https://www.wimoveis.com.br/propriedades/imovel-3026198578.html" in desc
+
+
 def test_card_desc_mostra_portal_de_origem():
     """O card deve indicar o portal certo (Wimóveis vs DFImóveis)."""
     base = {

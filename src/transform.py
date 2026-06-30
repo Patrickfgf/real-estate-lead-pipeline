@@ -94,6 +94,31 @@ def clean_name(raw: str | None) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Limpeza da mensagem (remove o boilerplate promocional do imovelweb)
+# ---------------------------------------------------------------------------
+# O boilerplate da Navent abre com "¡Após…" (PT) / "¡Después…" (ES). Ancorar nesse
+# marcador exato — em vez de cortar em QUALQUER '¡' — evita truncar a mensagem de um
+# lead que legitimamente escreva em espanhol ("¡Hola! …").
+_BOILERPLATE_RE = re.compile(r"\s*¡(?:Após|Después)\b.*", re.DOTALL | re.IGNORECASE)
+
+
+def clean_message(raw: str | None) -> str | None:
+    """Remove o boilerplate promocional que o imovelweb anexa à mensagem do lead.
+
+    Depois do texto do interessado, o portal cola um bloco pedindo avaliação + um
+    link de feedback (.../panel/feedback/...). Esse ruído polui o card do corretor.
+    Cortamos do marcador "¡Após"/"¡Después" até o fim e removemos uma URL de feedback
+    residual. O texto original continua preservado no `raw_payload`, então nada se perde.
+    """
+    if not isinstance(raw, str):
+        return None
+    text = _BOILERPLATE_RE.sub("", raw)
+    # Rede de segurança: remove uma URL de feedback do imovelweb que sobre sem o marcador.
+    text = re.sub(r"https?://\S*imovelweb\.com\.br/panel/feedback\S*", "", text)
+    return text.strip() or None
+
+
+# ---------------------------------------------------------------------------
 # Enriquecimento geográfico por DDD
 # ---------------------------------------------------------------------------
 # Mapa oficial DDD -> UF (Anatel). A corretora é de Brasília (61 -> DF), mas o
@@ -138,7 +163,7 @@ def uf_to_regiao(uf: str | None) -> str | None:
 # ---------------------------------------------------------------------------
 _TX_PT = {"SELL": "Compra", "RENT": "Aluguel"}
 # Planos de publicação do Wimóveis que indicam anúncio em posição de destaque.
-_DESTAQUE = {"DESTAQUE", "SUPER_DESTAQUE", "SUPERDESTAQUE", "TRIPLE", "PREMIUM", "TOP"}
+_DESTAQUE = {"DESTAQUE", "DESTACADO", "SUPER_DESTAQUE", "SUPERDESTAQUE", "TRIPLE", "PREMIUM", "TOP"}
 
 
 def extract_extras(raw_payload: str | None) -> dict:
@@ -164,6 +189,34 @@ def extract_extras(raw_payload: str | None) -> dict:
         "lead_origin": d.get("leadOrigin"),
         "is_destaque": bool(plano) and plano in _DESTAQUE,
     }
+
+
+# ---------------------------------------------------------------------------
+# Link público do anúncio (por portal)
+# ---------------------------------------------------------------------------
+# O número no fim da URL canônica é o id do anúncio na plataforma. No Wimóveis
+# (Navent) esse id é o idnavplat, que guardamos como listing_ref quando a corretora
+# não associou um código próprio. O DFImóveis usa um id interno que NÃO vem no
+# webhook (só originListingId/clientListingId), então fica sem link até confirmarmos
+# a fonte (DetailViewUrl do feed VrSync ou um campo do payload do DFImóveis).
+_WIMOVEIS_LISTING_URL = "https://www.wimoveis.com.br/propriedades/imovel-{id}.html"
+
+
+def listing_url(source: str, listing_ref: str | None) -> str | None:
+    """Monta a URL pública do anúncio a partir do portal + listing_ref.
+
+    Wimóveis: o listing_ref é o idnavplat (id do aviso na Navent) quando puramente
+    numérico — o número final da URL canônica, que resolve sem precisar do slug.
+    Um código de CRM associado (alfanumérico) não compõe a URL pública → None.
+    DFImóveis: o id da URL é o id interno do portal, que não chega no webhook → None.
+    """
+    if not isinstance(listing_ref, str) or not listing_ref.strip():
+        return None
+    ref = listing_ref.strip()
+    # só ASCII 0-9 (str.isdigit aceitaria dígitos Unicode como '²'); o idnavplat é int
+    if source == "wimoveis" and re.fullmatch(r"[0-9]+", ref):
+        return _WIMOVEIS_LISTING_URL.format(id=ref)
+    return None
 
 
 # ---------------------------------------------------------------------------

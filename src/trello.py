@@ -19,6 +19,7 @@ from src.db import carded_contacts, fetch_pending_leads, set_trello_card_id
 from src.transform import (
     compute_person_key,
     has_listing_intent,
+    listing_url,
     normalize_email,
     normalize_phone,
     score_lead,
@@ -67,6 +68,15 @@ def _card_name(lead: dict) -> str:
     return f"{base} — {ref}" if ref else base
 
 
+def _anuncio_line(lead: dict) -> str:
+    """Linha do anúncio no card: link clicável quando temos a URL pública do portal;
+    senão o código de referência (ou — quando não há nenhum)."""
+    url = listing_url(lead.get("source", ""), lead.get("listing_ref"))
+    if url:
+        return f"- 🔗 Anúncio: {url}"
+    return f"- 🏢 Anúncio (ref): {lead.get('listing_ref') or '—'}"
+
+
 def _card_desc(lead: dict) -> str:
     linhas = [
         f"**Lead {_source_display(lead['source'])}** · recebido {_fmt_dt(lead.get('received_at'))}",
@@ -74,7 +84,7 @@ def _card_desc(lead: dict) -> str:
         f"- 👤 Nome: {lead.get('name') or '—'}",
         f"- 📧 Email: {lead.get('email') or '—'}",
         f"- 📱 Telefone: {lead.get('phone') or '—'}",
-        f"- 🏢 Anúncio (ref): {lead.get('listing_ref') or '—'}",
+        _anuncio_line(lead),
         f"- 🧑‍💼 Anunciante: {lead.get('advertiser_code') or '—'}",
         f"- 🏬 Imobiliária: {lead.get('agency_code') or '—'}",
         f"- 🗓️ Data do lead: {_fmt_dt(lead.get('lead_date'))}",

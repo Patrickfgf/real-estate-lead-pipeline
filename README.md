@@ -408,6 +408,12 @@ descrição do card). Além disso, a **mesma pessoa** (telefone/e-mail) entrando
 mais de um portal é **consolidada num único card** — cada nova entrada vira um
 comentário no card existente, em vez de gerar cards duplicados.
 
+O card traz o **link clicável do anúncio** quando dá pra montá-lo a partir do
+callback (Wimóveis: a URL pública do imóvel, derivada do `idnavplat`) — senão,
+mostra o código de referência do anúncio. A mensagem do lead é **higienizada**
+antes de ir pro card (o boilerplate promocional que o imovelweb anexa é removido;
+o texto original fica preservado no `raw_payload`).
+
 ---
 
 ## Cadastrar o callback de leads na Navent (Wimóveis)
@@ -444,7 +450,7 @@ Duas tabelas no DuckDB.
 |---|---|
 | `source`, `external_id` | **Chave primária composta** — origem (`wimoveis`/`dfimoveis`) + ID na origem (`idEvento` no Wimóveis, `originLeadId` no DFImóveis) |
 | `name`, `email`, `phone`, `message` | Dados de contato do interessado |
-| `listing_ref`, `advertiser_code`, `agency_code` | Anúncio, anunciante e imobiliária |
+| `listing_ref`, `advertiser_code`, `agency_code` | Anúncio (Wimóveis: o `idnavplat` — ID do aviso na Navent, que sempre vem; ou `referencia` quando a corretora associou um código de CRM), anunciante e imobiliária |
 | `cpf` | Documento, quando informado |
 | `lead_date` | Quando o lead ocorreu na origem (`dataRegistro` / `timestamp`) |
 | `received_at` | Quando nós ingerimos |
@@ -548,7 +554,7 @@ Duas tabelas no DuckDB.
 
 ```powershell
 pip install -r requirements-dev.txt
-pytest                      # 60 testes, isolados de serviços externos
+pytest                      # 73 testes, isolados de serviços externos
 ```
 
 Cobre a ingestão dos dois portais (health *deep check*, validação de segredo,

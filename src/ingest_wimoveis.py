@@ -16,7 +16,7 @@ from fastapi.concurrency import run_in_threadpool
 from src.config import settings
 from src.db import insert_dead_letter, insert_lead
 from src.models import Lead, WimoveisContato
-from src.transform import build_clean
+from src.transform import build_clean, clean_message
 from src.trello import push_pending_leads
 
 router = APIRouter(prefix="/webhook", tags=["ingestão"])
@@ -83,14 +83,21 @@ async def receber_lead_wimoveis(
             status_code=422, detail=f"Payload inválido (guardado para revisão): {exc}"
         ) from exc
 
+    # idnavplat (ID do aviso na Navent) é o vínculo com o imóvel que SEMPRE vem; a
+    # 'referencia' (código legível do CRM) só chega se a corretora associou o aviso,
+    # então tem precedência quando existe.
+    listing_ref = contato.referencia or (
+        str(contato.id_navplat) if contato.id_navplat is not None else None
+    )
+
     lead = Lead(
         external_id=contato.id_evento,
         source="wimoveis",
         name=contato.nome,
         email=contato.email,
         phone=contato.telefone,
-        message=contato.mensagem,
-        listing_ref=contato.referencia,
+        message=clean_message(contato.mensagem),
+        listing_ref=listing_ref,
         advertiser_code=contato.codigo_anunciante,
         agency_code=contato.codigo_imobiliaria,
         cpf=contato.cpf,
