@@ -430,8 +430,9 @@ para onde fazer o POST. O `src/navent.py` faz isso por código (CLI).
 # 1. Exponha o webhook local com uma URL pública (túnel cloudflared ou domínio do VPS)
 #    e preencha WEBHOOK_PUBLIC_URL no .env (sem barra final).
 python -m src.navent show               # GET: mostra a config de callback atual
-python -m src.navent register --dry-run # imprime o que seria enviado (não chama a API)
-python -m src.navent register           # PUT: cadastra/atualiza o callback
+python -m src.navent register --dry-run # lê a config (GET) e imprime o corpo do PUT (exige NAVENT_TOKEN)
+python -m src.navent register           # GET+PUT: reaponta preservando subscriptions/lenguajeCallbackBody
+python -m src.navent register --force    # PUT sem LER a config (1º cadastro/404 — RISCO: pode apagar dados)
 python -m src.navent delete CONTACTO    # DELETE: desinscreve um evento
 ```
 

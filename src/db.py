@@ -138,16 +138,19 @@ def insert_lead(lead: Lead) -> bool:
 def fetch_pending_leads(limit: int = 50) -> list[dict]:
     """Leads ainda não enviados ao Trello (trello_card_id IS NULL), mais antigos primeiro."""
     con = get_connection()
-    rows = con.execute(
-        f"""
-        SELECT {", ".join(_LEAD_COLS)}
-        FROM leads_raw
-        WHERE trello_card_id IS NULL
-        ORDER BY received_at
-        LIMIT ?;
-        """,
-        [limit],
-    ).fetchall()
+    # O lock cobre o par execute+fetchall: a conexão é compartilhada e um execute
+    # de outra thread entre os dois descarta/troca o resultado pendente.
+    with _lock:
+        rows = con.execute(
+            f"""
+            SELECT {", ".join(_LEAD_COLS)}
+            FROM leads_raw
+            WHERE trello_card_id IS NULL
+            ORDER BY received_at
+            LIMIT ?;
+            """,
+            [limit],
+        ).fetchall()
     return [dict(zip(_LEAD_COLS, row, strict=True)) for row in rows]
 
 
@@ -158,10 +161,11 @@ def carded_contacts() -> list[dict]:
     é a mesma pessoa de alguém já carregado (inclusive de outro portal).
     """
     con = get_connection()
-    rows = con.execute(
-        "SELECT source, external_id, phone, email, trello_card_id "
-        "FROM leads_raw WHERE trello_card_id IS NOT NULL;"
-    ).fetchall()
+    with _lock:
+        rows = con.execute(
+            "SELECT source, external_id, phone, email, trello_card_id "
+            "FROM leads_raw WHERE trello_card_id IS NOT NULL;"
+        ).fetchall()
     cols = ["source", "external_id", "phone", "email", "trello_card_id"]
     return [dict(zip(cols, row, strict=True)) for row in rows]
 
@@ -215,11 +219,12 @@ def insert_dead_letter(source: str, error: str, raw_payload: str, received_at) -
 def fetch_dead_letter(limit: int = 20) -> list[dict]:
     """Últimas entradas da caixa de revisão (mais recentes primeiro)."""
     con = get_connection()
-    rows = con.execute(
-        "SELECT received_at, source, error, raw_payload FROM leads_dead_letter "
-        "ORDER BY received_at DESC LIMIT ?;",
-        [limit],
-    ).fetchall()
+    with _lock:
+        rows = con.execute(
+            "SELECT received_at, source, error, raw_payload FROM leads_dead_letter "
+            "ORDER BY received_at DESC LIMIT ?;",
+            [limit],
+        ).fetchall()
     cols = ["received_at", "source", "error", "raw_payload"]
     return [dict(zip(cols, row, strict=True)) for row in rows]
 
