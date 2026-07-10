@@ -16,6 +16,7 @@ from src.transform import (
     clean_message,
     clean_name,
     ddd_to_uf,
+    dfimoveis_operation,
     enrich,
     extract_extras,
     flag_duplicates,
@@ -185,6 +186,49 @@ def test_extras_aluguel_e_payload_quebrado():
     quebrado = extract_extras("isto não é json")
     assert quebrado["transaction_type"] is None
     assert quebrado["is_destaque"] is False
+
+
+# --------------------------------------------------------------------------
+# dfimoveis_operation — tipo de operação (Compra/Aluguel) do DFImóveis
+# --------------------------------------------------------------------------
+# Motivo empírico: os payloads reais do DFImóveis NÃO trazem transactionType
+# (0 de 101 leads). O único sinal de aluguel é o clientListingId (código do CRM
+# da corretora). A função prefere transactionType quando presente e, senão, cai
+# numa heurística sobre o clientListingId.
+def test_dfimoveis_operation_prefere_transaction_type():
+    # Quando presente, transactionType manda (SELL->Compra, RENT->Aluguel).
+    assert dfimoveis_operation({"transactionType": "SELL"}) == "Compra"
+    assert dfimoveis_operation({"transactionType": "RENT"}) == "Aluguel"
+    # transactionType vence até quando o clientListingId sugeriria outra coisa.
+    assert dfimoveis_operation(
+        {"transactionType": "SELL", "clientListingId": "al0001"}
+    ) == "Compra"
+
+
+def test_dfimoveis_operation_fallback_aluguel_pelo_client_listing_id():
+    # Sem transactionType, o clientListingId do CRM sinaliza aluguel.
+    assert dfimoveis_operation({"clientListingId": "al0001"}) == "Aluguel"
+    assert dfimoveis_operation({"clientListingId": "ALUGUEL "}) == "Aluguel"  # com espaço
+    assert dfimoveis_operation({"clientListingId": "al123"}) == "Aluguel"
+
+
+def test_dfimoveis_operation_fallback_nao_aluguel_retorna_none():
+    # 'CA' = casa (tipo do imóvel), não a operação → indefinido, não afirmamos Compra.
+    assert dfimoveis_operation({"clientListingId": "CA0277"}) is None
+    # Caso de borda crítico: 'alpaineiras' (Al. Paineiras, nome de condomínio)
+    # começa com 'al' mas NÃO é aluguel — a regex ^al\d exige um dígito após 'al'.
+    assert dfimoveis_operation({"clientListingId": "alpaineiras"}) is None
+    assert dfimoveis_operation({"clientListingId": "1368266"}) is None  # numérico
+    assert dfimoveis_operation({"clientListingId": ""}) is None  # vazio
+    assert dfimoveis_operation({}) is None  # ausente
+
+
+def test_dfimoveis_operation_tolera_str_json_e_none():
+    # Aceita o payload como JSON string, dict ou None sem quebrar.
+    assert dfimoveis_operation('{"transactionType": "RENT"}') == "Aluguel"
+    assert dfimoveis_operation('{"clientListingId": "al0001"}') == "Aluguel"
+    assert dfimoveis_operation("isto não é json") is None
+    assert dfimoveis_operation(None) is None
 
 
 # --------------------------------------------------------------------------

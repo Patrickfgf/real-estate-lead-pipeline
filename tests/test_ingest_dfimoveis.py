@@ -98,6 +98,32 @@ def test_transaction_type_ausente_nao_quebra_e_fica_nulo():
     assert row[0] is None  # sem tipo derivado, a coluna nasce nula (não quebra)
 
 
+def test_transaction_type_aluguel_pelo_client_listing_id_sem_transaction_type():
+    """Empírico: os payloads reais do DFImóveis não trazem transactionType. O único
+    sinal de aluguel é o clientListingId do CRM — 'al0001' resolve para 'Aluguel'."""
+    lead = {**SAMPLE, "originLeadId": "df-al-crm", "clientListingId": "al0001"}
+    lead.pop("transactionType", None)
+    client.post("/webhook/dfimoveis", params={"token": SECRET}, json=lead)
+    row = get_connection().execute(
+        "SELECT transaction_type FROM leads_raw WHERE source='dfimoveis' AND external_id=?",
+        ["df-al-crm"],
+    ).fetchone()
+    assert row[0] == "Aluguel"
+
+
+def test_transaction_type_client_listing_id_de_casa_fica_nulo():
+    """clientListingId 'CA0277' (CA = casa, tipo do imóvel) NÃO é aluguel: sem
+    transactionType, o tipo fica indefinido (NULL) e o card cai no quadro fallback."""
+    lead = {**SAMPLE, "originLeadId": "df-ca-crm", "clientListingId": "CA0277"}
+    lead.pop("transactionType", None)
+    client.post("/webhook/dfimoveis", params={"token": SECRET}, json=lead)
+    row = get_connection().execute(
+        "SELECT transaction_type FROM leads_raw WHERE source='dfimoveis' AND external_id=?",
+        ["df-ca-crm"],
+    ).fetchone()
+    assert row[0] is None
+
+
 def test_payload_invalido_vai_para_caixa_de_revisao():
     """Blindagem: payload recusado não some — vai para a dead-letter."""
     marcador = "df-dead-letter-abc"
