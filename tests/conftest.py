@@ -22,3 +22,10 @@ os.environ["TRELLO_API_TOKEN"] = ""
 os.environ["TRELLO_LIST_ID"] = ""
 os.environ["TRELLO_LABEL_WIMOVEIS"] = ""
 os.environ["TRELLO_LABEL_DFIMOVEIS"] = ""
+
+# Neutraliza o token da Navent: sem NAVENT_TOKEN, `fetch_operation` bate no guard
+# do topo e devolve None SEM tocar a rede. Quando o token real for pro .env, os
+# testes de ingestão Wimóveis (que não mockam a Navent) continuariam offline —
+# senão passariam a chamar a API real (lento/flaky). Vence o .env (load_dotenv
+# não sobrescreve o ambiente já definido).
+os.environ["NAVENT_TOKEN"] = ""

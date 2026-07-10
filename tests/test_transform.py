@@ -16,6 +16,7 @@ from src.transform import (
     clean_message,
     clean_name,
     ddd_to_uf,
+    enrich,
     extract_extras,
     flag_duplicates,
     has_listing_intent,
@@ -184,6 +185,45 @@ def test_extras_aluguel_e_payload_quebrado():
     quebrado = extract_extras("isto não é json")
     assert quebrado["transaction_type"] is None
     assert quebrado["is_destaque"] is False
+
+
+# --------------------------------------------------------------------------
+# enrich — precedência do transaction_type PERSISTIDO sobre o derivado do payload
+# --------------------------------------------------------------------------
+# A partir da Fase 1 o `transaction_type` é persistido em `leads_raw` (inclui o
+# resultado da API Navent no Wimóveis). `leads_raw_dataframe()` passa a trazer essa
+# coluna, e `enrich()` também deriva `transaction_type` do payload via extract_extras.
+# O persistido tem PRECEDÊNCIA; o derivado é só fallback quando o persistido é nulo.
+def _enrich_df(raw_payload, persisted=None):
+    """Monta o df mínimo que `enrich` consome (phone/email/name/raw_payload)."""
+    row = {"phone": None, "email": None, "name": "cliente", "raw_payload": raw_payload}
+    if persisted is not None:
+        row["transaction_type"] = persisted
+    return pd.DataFrame([row])
+
+
+def test_enrich_persistido_vence_o_derivado_do_payload():
+    # persistido = "Aluguel" (veio da API Navent); payload deriva "Compra" (SELL).
+    df = _enrich_df('{"transactionType": "SELL"}', persisted="Aluguel")
+    out = enrich(df)
+    # sem colisão de coluna (uma só) e o valor persistido prevalece
+    assert list(out.columns).count("transaction_type") == 1
+    assert out["transaction_type"].iloc[0] == "Aluguel"
+
+
+def test_enrich_usa_derivado_quando_persistido_e_nulo():
+    # Caso de produção: a coluna vem de leads_raw_dataframe() com NaN (tipo não setado)
+    # → cai no fallback derivado do payload (RENT → Aluguel).
+    df = _enrich_df('{"transactionType": "RENT"}', persisted=float("nan"))
+    out = enrich(df)
+    assert out["transaction_type"].iloc[0] == "Aluguel"
+
+
+def test_enrich_sem_coluna_persistida_deriva_do_payload():
+    # Compatibilidade: df sem a coluna transaction_type (ex.: chamada direta) deriva normalmente.
+    df = _enrich_df('{"transactionType": "SELL"}', persisted=None)
+    out = enrich(df)
+    assert out["transaction_type"].iloc[0] == "Compra"
 
 
 # --------------------------------------------------------------------------

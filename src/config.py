@@ -52,5 +52,30 @@ class Settings:
     trello_workspace_name: str = os.getenv("TRELLO_WORKSPACE_NAME", "Leads CRM")
     trello_board_name: str = os.getenv("TRELLO_BOARD_NAME", "Leads — Imobiliária")
 
+    # ---------- Trello — roteamento por 2 quadros (Fase 2) ----------
+    # Cada card vai para o quadro do seu `transaction_type`: Compra → quadro de Compra,
+    # Aluguel → quadro de Locação. `transaction_type` None/desconhecido (ex.: Wimóveis
+    # quando a Navent não resolveu) cai no quadro ÚNICO acima (`trello_list_id`).
+    # ROLLOUT SEGURO: enquanto o list id do quadro estiver vazio (estado atual), o
+    # roteamento fica INATIVO e tudo cai no fallback — nada quebra antes do `setup`.
+    trello_board_name_compra: str = os.getenv("TRELLO_BOARD_NAME_COMPRA", "Leads — Compra")
+    trello_board_name_aluguel: str = os.getenv("TRELLO_BOARD_NAME_ALUGUEL", "Leads — Locação")
+    # Listas de entrada de cada quadro (o list id ativa/desativa o roteamento do tipo).
+    trello_list_id_compra: str = os.getenv("TRELLO_LIST_ID_COMPRA", "")
+    trello_list_id_aluguel: str = os.getenv("TRELLO_LIST_ID_ALUGUEL", "")
+    # Etiquetas POR-QUADRO (origem + temperatura). Um id de etiqueta pertence a UM
+    # quadro só — por isso o conjunto é duplicado (um para Compra, outro para Locação);
+    # resolver a etiqueta junto com o quadro evita o add_label bater em id de outro quadro.
+    trello_label_wimoveis_compra: str = os.getenv("TRELLO_LABEL_WIMOVEIS_COMPRA", "")
+    trello_label_dfimoveis_compra: str = os.getenv("TRELLO_LABEL_DFIMOVEIS_COMPRA", "")
+    trello_label_quente_compra: str = os.getenv("TRELLO_LABEL_QUENTE_COMPRA", "")
+    trello_label_morno_compra: str = os.getenv("TRELLO_LABEL_MORNO_COMPRA", "")
+    trello_label_frio_compra: str = os.getenv("TRELLO_LABEL_FRIO_COMPRA", "")
+    trello_label_wimoveis_aluguel: str = os.getenv("TRELLO_LABEL_WIMOVEIS_ALUGUEL", "")
+    trello_label_dfimoveis_aluguel: str = os.getenv("TRELLO_LABEL_DFIMOVEIS_ALUGUEL", "")
+    trello_label_quente_aluguel: str = os.getenv("TRELLO_LABEL_QUENTE_ALUGUEL", "")
+    trello_label_morno_aluguel: str = os.getenv("TRELLO_LABEL_MORNO_ALUGUEL", "")
+    trello_label_frio_aluguel: str = os.getenv("TRELLO_LABEL_FRIO_ALUGUEL", "")
+
 
 settings = Settings()

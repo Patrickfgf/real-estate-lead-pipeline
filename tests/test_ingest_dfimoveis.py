@@ -69,6 +69,35 @@ def test_telefone_monta_de_ddd_e_phone_sem_phoneNumber():
     assert row[0] == f"{SAMPLE['ddd']}{SAMPLE['phone']}"
 
 
+def test_transaction_type_persistido_a_partir_do_payload():
+    """Fase 1: o VrSync traz `transactionType` (SELL) — a ingestão persiste 'Compra'
+    em leads_raw para a carga do Trello rotear o card (Locações vs Compra)."""
+    lead = {**SAMPLE, "originLeadId": "df-tt-hook"}
+    assert lead["transactionType"] == "SELL"  # o sample é de compra
+    client.post("/webhook/dfimoveis", params={"token": SECRET}, json=lead)
+    row = get_connection().execute(
+        "SELECT transaction_type FROM leads_raw WHERE source='dfimoveis' AND external_id=?",
+        ["df-tt-hook"],
+    ).fetchone()
+    assert row[0] == "Compra"
+
+
+def test_transaction_type_ausente_nao_quebra_e_fica_nulo():
+    """Caminho 'tipo ausente': um payload DFImóveis SEM `transactionType` não quebra a
+    ingestão — o tipo resolve para None e é gravado NULL no PRÓPRIO INSERT; o webhook
+    responde 200 (o lead nasce com a coluna nula, sem UPDATE posterior)."""
+    lead = {**SAMPLE, "originLeadId": "df-sem-tt"}
+    lead.pop("transactionType", None)  # o sample é de compra; aqui removemos o tipo
+    resp = client.post("/webhook/dfimoveis", params={"token": SECRET}, json=lead)
+    assert resp.status_code == 200
+
+    row = get_connection().execute(
+        "SELECT transaction_type FROM leads_raw WHERE source='dfimoveis' AND external_id=?",
+        ["df-sem-tt"],
+    ).fetchone()
+    assert row[0] is None  # sem tipo derivado, a coluna nasce nula (não quebra)
+
+
 def test_payload_invalido_vai_para_caixa_de_revisao():
     """Blindagem: payload recusado não some — vai para a dead-letter."""
     marcador = "df-dead-letter-abc"

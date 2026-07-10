@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS leads_raw (
     lead_date       TIMESTAMPTZ,
     raw_payload     VARCHAR,
     received_at     TIMESTAMPTZ,
+    transaction_type VARCHAR,
     trello_card_id  VARCHAR,
     PRIMARY KEY (source, external_id)
 );
@@ -58,6 +59,7 @@ _LEAD_COLS = [
     "listing_ref",
     "advertiser_code",
     "agency_code",
+    "transaction_type",
     "lead_date",
     "received_at",
 ]
@@ -71,6 +73,10 @@ def get_connection() -> duckdb.DuckDBPyConnection:
         _con = duckdb.connect(settings.duckdb_path)
         _con.execute(_SCHEMA)
         _con.execute(_SCHEMA_DEAD_LETTER)
+        # Migração idempotente: bancos criados antes da Fase 1 (produção) não têm a
+        # coluna `transaction_type`. `ADD COLUMN IF NOT EXISTS` é no-op num banco novo
+        # (o _SCHEMA já a cria) e adiciona a coluna nos antigos — sem apagar dados.
+        _con.execute("ALTER TABLE leads_raw ADD COLUMN IF NOT EXISTS transaction_type VARCHAR")
     return _con
 
 
@@ -111,8 +117,9 @@ def insert_lead(lead: Lead) -> bool:
             """
             INSERT INTO leads_raw
                 (source, external_id, name, email, phone, message, listing_ref,
-                 advertiser_code, agency_code, cpf, lead_date, raw_payload, received_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 advertiser_code, agency_code, cpf, lead_date, raw_payload, received_at,
+                 transaction_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (source, external_id) DO NOTHING
             RETURNING external_id;
             """,
@@ -130,6 +137,7 @@ def insert_lead(lead: Lead) -> bool:
                 lead.lead_date,
                 lead.raw_payload,
                 lead.received_at,
+                lead.transaction_type,
             ],
         ).fetchone()
     return row is not None
@@ -163,10 +171,10 @@ def carded_contacts() -> list[dict]:
     con = get_connection()
     with _lock:
         rows = con.execute(
-            "SELECT source, external_id, phone, email, trello_card_id "
+            "SELECT source, external_id, phone, email, transaction_type, trello_card_id "
             "FROM leads_raw WHERE trello_card_id IS NOT NULL;"
         ).fetchall()
-    cols = ["source", "external_id", "phone", "email", "trello_card_id"]
+    cols = ["source", "external_id", "phone", "email", "transaction_type", "trello_card_id"]
     return [dict(zip(cols, row, strict=True)) for row in rows]
 
 
@@ -177,6 +185,21 @@ def set_trello_card_id(source: str, external_id: str, card_id: str) -> None:
         con.execute(
             "UPDATE leads_raw SET trello_card_id = ? WHERE source = ? AND external_id = ?;",
             [card_id, source, external_id],
+        )
+
+
+def set_transaction_type(source: str, external_id: str, tipo: str | None) -> None:
+    """Atualiza o tipo de operação de um lead já gravado ("Compra" | "Aluguel" | None).
+
+    A ingestão já resolve o tipo ANTES do INSERT (grava na criação do lead — sem janela
+    de NULL). Esta função fica para o BACKFILL (Fase 3): reprocessar leads antigos cujo
+    tipo ainda não foi resolvido. Espelha `set_trello_card_id`: UPDATE por chave, sob `_lock`.
+    """
+    con = get_connection()
+    with _lock:
+        con.execute(
+            "UPDATE leads_raw SET transaction_type = ? WHERE source = ? AND external_id = ?;",
+            [tipo, source, external_id],
         )
 
 

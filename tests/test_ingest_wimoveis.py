@@ -135,6 +135,39 @@ def test_mensagem_e_limpa_do_spam_na_ingestao():
     assert "panel/feedback" in raw_payload  # original preservado no cru
 
 
+def test_transaction_type_resolvido_via_navent(monkeypatch):
+    """Fase 1: o callback do Wimóveis NÃO traz o tipo — resolvemos via API Navent
+    (fetch_operation) e persistimos em leads_raw. Aqui mockamos a resposta 'Aluguel'.
+
+    O mock CAPTURA os argumentos recebidos (em vez de ignorá-los com `*a, **k`) e o
+    teste confere que a ingestão passa (idnavplat, codigo_imobiliaria) NA ORDEM certa
+    — uma troca de ordem no `fetch_operation(...)` do hook resolveria o tipo com os
+    identificadores trocados e quebraria a resolução em silêncio."""
+    import src.ingest_wimoveis as iw
+
+    captura = {}
+
+    def _fake_fetch(*args, **kwargs):
+        captura["args"] = args
+        captura["kwargs"] = kwargs
+        return "Aluguel"
+
+    monkeypatch.setattr(iw, "fetch_operation", _fake_fetch)
+    lead = {**SAMPLE, "idEvento": "evt-tt-hook"}
+    client.post("/webhook/wimoveis", params={"token": SECRET}, json=lead)
+    row = get_connection().execute(
+        "SELECT transaction_type FROM leads_raw WHERE source='wimoveis' AND external_id=?",
+        ["evt-tt-hook"],
+    ).fetchone()
+    assert row[0] == "Aluguel"
+    # Contrato do hook: idnavplat (ID do aviso, int) primeiro, codigo_imobiliaria
+    # (str) depois — a ordem que `fetch_operation` espera. Assert posicional pega a troca.
+    assert captura["kwargs"] == {}
+    idnavplat, codigo_imobiliaria = captura["args"]
+    assert idnavplat == SAMPLE["idnavplat"]
+    assert codigo_imobiliaria == SAMPLE["codigoImobiliaria"]
+
+
 def test_payload_invalido_retorna_422():
     # falta idEvento e nome (campos obrigatórios)
     resp = client.post(

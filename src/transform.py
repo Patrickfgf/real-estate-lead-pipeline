@@ -166,7 +166,7 @@ _TX_PT = {"SELL": "Compra", "RENT": "Aluguel"}
 _DESTAQUE = {"DESTAQUE", "DESTACADO", "SUPER_DESTAQUE", "SUPERDESTAQUE", "TRIPLE", "PREMIUM", "TOP"}
 
 
-def extract_extras(raw_payload: str | None) -> dict:
+def extract_extras(raw_payload: str | dict | None) -> dict:
     """Garimpa o `raw_payload` por campos úteis que não estão no lead canônico.
 
     - `transaction_type`: VrSync `transactionType` (SELL/RENT) → Compra/Aluguel
@@ -325,10 +325,19 @@ CLEAN_COLUMNS = [
 def enrich(df: pd.DataFrame) -> pd.DataFrame:
     """Aplica as normalizações puras, devolvendo o df com as colunas derivadas."""
     df = df.copy()
+    # `transaction_type` pode chegar já PERSISTIDO da crua (Fase 1 — inclui o
+    # resultado da API Navent no Wimóveis). Tiramos a coluna antes do concat para
+    # não colidir com o `transaction_type` que `extract_extras` deriva do payload
+    # (concat cego criaria coluna duplicada e quebraria o reindex do build_clean).
+    persisted = df.pop("transaction_type") if "transaction_type" in df.columns else None
     phone = df["phone"].apply(normalize_phone).apply(pd.Series)
     email = df["email"].apply(normalize_email).apply(pd.Series)
     extras = df["raw_payload"].apply(extract_extras).apply(pd.Series)
     df = pd.concat([df, phone, email, extras], axis=1)
+    # Precedência: o valor persistido vence; o derivado do payload é só fallback
+    # onde o persistido é nulo (NaN quando a crua ainda não teve o tipo resolvido).
+    if persisted is not None:
+        df["transaction_type"] = persisted.where(persisted.notna(), df["transaction_type"])
 
     df["name_clean"] = df["name"].apply(clean_name)
     df["uf"] = df["phone_ddd"].apply(ddd_to_uf)

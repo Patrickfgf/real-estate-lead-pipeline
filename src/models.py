@@ -89,3 +89,4 @@ class Lead(BaseModel):
     lead_date: datetime | None = None  # dataRegistro (quando o lead ocorreu na origem)
     raw_payload: str
     received_at: datetime  # quando nós recebemos/ingerimos
+    transaction_type: str | None = None  # "Compra" | "Aluguel" | None — resolvido na ingestão

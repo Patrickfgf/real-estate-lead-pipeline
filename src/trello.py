@@ -98,12 +98,66 @@ def _card_desc(lead: dict) -> str:
     return "\n".join(linhas)
 
 
-def _source_label_id(source: str) -> str | None:
-    """ID da etiqueta de origem (por portal) configurada no .env, se houver."""
-    return {
-        "wimoveis": settings.trello_label_wimoveis,
-        "dfimoveis": settings.trello_label_dfimoveis,
-    }.get(source) or None
+# ---------------------------------------------------------------------------
+# Roteamento por 2 quadros (Fase 2): Compra vs Locação
+# ---------------------------------------------------------------------------
+# `transaction_type` -> nomes dos atributos de `settings` do quadro DEDICADO. As
+# etiquetas ficam JUNTO da lista de cada quadro porque um id de etiqueta do Trello
+# pertence a UM quadro só: resolver lista e etiqueta pelo MESMO mapa garante que o
+# add_label nunca use um id de outro quadro (que o Trello recusaria — card sem etiqueta).
+_BOARD_ATTRS = {
+    "Compra": {
+        "list_id": "trello_list_id_compra",
+        "wimoveis": "trello_label_wimoveis_compra",
+        "dfimoveis": "trello_label_dfimoveis_compra",
+        "Quente": "trello_label_quente_compra",
+        "Morno": "trello_label_morno_compra",
+        "Frio": "trello_label_frio_compra",
+    },
+    "Aluguel": {
+        "list_id": "trello_list_id_aluguel",
+        "wimoveis": "trello_label_wimoveis_aluguel",
+        "dfimoveis": "trello_label_dfimoveis_aluguel",
+        "Quente": "trello_label_quente_aluguel",
+        "Morno": "trello_label_morno_aluguel",
+        "Frio": "trello_label_frio_aluguel",
+    },
+}
+# Quadro ÚNICO (fallback): tipo None/desconhecido, OU quadro dedicado ainda não
+# configurado (list id vazio). Aponta para as env vars originais — preserva 100% o
+# comportamento pré-Fase-2 enquanto os 2 quadros não estiverem no .env (rollout seguro).
+_FALLBACK_ATTRS = {
+    "list_id": "trello_list_id",
+    "wimoveis": "trello_label_wimoveis",
+    "dfimoveis": "trello_label_dfimoveis",
+    "Quente": "trello_label_quente",
+    "Morno": "trello_label_morno",
+    "Frio": "trello_label_frio",
+}
+
+
+def _board_attrs(transaction_type: str | None) -> dict:
+    """Atributos de `settings` do quadro de destino do lead — ÚNICO ponto de decisão
+    do roteamento (lista e etiquetas saem sempre do MESMO quadro).
+
+    Roteia por `transaction_type` só quando o quadro dedicado TEM list id configurada;
+    sem ela (estado atual: só TRELLO_LIST_ID) ou tipo None/desconhecido → quadro único.
+    """
+    attrs = _BOARD_ATTRS.get(transaction_type)
+    if attrs and getattr(settings, attrs["list_id"], ""):
+        return attrs
+    return _FALLBACK_ATTRS
+
+
+def _list_id_for(transaction_type: str | None) -> str:
+    """ID da lista de entrada do quadro de destino (dedicado ou fallback único)."""
+    return getattr(settings, _board_attrs(transaction_type)["list_id"], "")
+
+
+def _source_label_id(source: str, transaction_type: str | None = None) -> str | None:
+    """ID da etiqueta de ORIGEM (portal) no quadro de destino do lead, se houver."""
+    attr = _board_attrs(transaction_type).get(source)
+    return (getattr(settings, attr, "") or None) if attr else None
 
 
 def _lead_temperature(lead: dict) -> str:
@@ -124,13 +178,10 @@ def _lead_temperature(lead: dict) -> str:
     return score_to_temperature(score)
 
 
-def _temp_label_id(temperature: str) -> str | None:
-    """ID da etiqueta de temperatura configurada no .env, se houver."""
-    return {
-        "Quente": getattr(settings, "trello_label_quente", ""),
-        "Morno": getattr(settings, "trello_label_morno", ""),
-        "Frio": getattr(settings, "trello_label_frio", ""),
-    }.get(temperature) or None
+def _temp_label_id(temperature: str, transaction_type: str | None = None) -> str | None:
+    """ID da etiqueta de TEMPERATURA no quadro de destino do lead, se houver."""
+    attr = _board_attrs(transaction_type).get(temperature)
+    return (getattr(settings, attr, "") or None) if attr else None
 
 
 # Quão "quente" é cada faixa — para nunca rebaixar a etiqueta de um card na reentrada.
@@ -140,17 +191,20 @@ _TEMP_RANK = {"Frio": 1, "Morno": 2, "Quente": 3}
 def create_card(lead: dict) -> str:
     """Cria o card no Trello e devolve o id. Lança em erro de HTTP.
 
-    A etiqueta de ORIGEM (portal) vai já na criação (idLabels na query). A de
-    TEMPERATURA (lead scoring, Fase 3) é adicionada num segundo passo, pelo
-    endpoint dedicado de etiquetas: passar várias etiquetas separadas por vírgula
-    em `idLabels` não é confiável (a vírgula vira %2C e o Trello recusa o conjunto
-    inteiro — o card sairia sem nenhuma etiqueta).
+    Roteia o card para o quadro do `transaction_type` (Compra vs Locação) via
+    `_list_id_for`; tipo None/desconhecido ou quadro dedicado sem list id → quadro
+    único (fallback). A etiqueta de ORIGEM (portal) vai já na criação (idLabels na
+    query) e a de TEMPERATURA (Fase 3) num 2º passo — SEMPRE do quadro de destino:
+    passar várias etiquetas por vírgula em `idLabels` não é confiável (a vírgula vira
+    %2C e o Trello recusa o conjunto inteiro — o card sairia sem nenhuma etiqueta).
     """
-    if not settings.trello_list_id:
+    tt = lead.get("transaction_type")
+    list_id = _list_id_for(tt)
+    if not list_id:
         raise RuntimeError("TRELLO_LIST_ID não configurado no .env")
     # idLabels precisa ir na query string; no corpo (data) o Trello ignora.
-    params = {**_auth(), "idList": settings.trello_list_id}
-    source_label = _source_label_id(lead["source"])
+    params = {**_auth(), "idList": list_id}
+    source_label = _source_label_id(lead["source"], tt)
     if source_label:
         params["idLabels"] = source_label
     resp = requests.post(
@@ -164,7 +218,7 @@ def create_card(lead: dict) -> str:
 
     # Etiqueta de temperatura: best-effort. O card já existe; uma falha aqui não
     # pode derrubar a carga (senão o lead fica pendente e a próxima carga duplica).
-    temp_label = _temp_label_id(_lead_temperature(lead))
+    temp_label = _temp_label_id(_lead_temperature(lead), tt)
     if temp_label:
         try:
             add_label(card_id, temp_label)
@@ -216,8 +270,12 @@ def _sync_temperature_label(card_id: str, lead: dict) -> None:
 
     Ex.: pessoa entrou só com e-mail (Frio) e depois referencia um anúncio (Quente):
     o card sobe para Quente. O contrário (reentrar mais frio) não rebaixa.
+
+    As etiquetas são as do quadro de destino do lead (`transaction_type`) — o card
+    reentrante vive num quadro só, então sincronizamos a temperatura DAQUELE quadro.
     """
-    por_nome = {t: _temp_label_id(t) for t in ("Quente", "Morno", "Frio")}
+    tt = lead.get("transaction_type")
+    por_nome = {t: _temp_label_id(t, tt) for t in ("Quente", "Morno", "Frio")}
     por_nome = {t: i for t, i in por_nome.items() if i}  # só as configuradas
     if not por_nome:
         return  # etiquetas de temperatura não configuradas no .env
@@ -260,7 +318,7 @@ def _link_to_existing_card(card_id: str, lead: dict) -> None:
     """
     try:
         add_comment(card_id, _dup_comment(lead))
-        label_id = _source_label_id(lead["source"])
+        label_id = _source_label_id(lead["source"], lead.get("transaction_type"))
         if label_id:
             add_label(card_id, label_id)  # mostra que o card veio de 2 portais
         _sync_temperature_label(card_id, lead)  # esquenta o card se o lead reentrou mais quente
@@ -269,12 +327,22 @@ def _link_to_existing_card(card_id: str, lead: dict) -> None:
 
 
 def _carded_person_map() -> dict:
-    """Mapa `chave-da-pessoa -> card_id` dos leads que já têm card."""
-    mapa: dict[str, str] = {}
+    """Mapa `(list_id-do-quadro, chave-da-pessoa) -> card_id` dos leads que já têm card.
+
+    A chave inclui o QUADRO RESOLVIDO (`_list_id_for(transaction_type)`), não o
+    `transaction_type` cru, porque a dedup é POR-QUADRO DE DESTINO: a mesma pessoa
+    deve ter no máximo um card em CADA quadro. Chavear pelo tipo cru furaria isso
+    quando o roteamento está inativo (só TRELLO_LIST_ID) — aí Compra e Aluguel caem
+    no MESMO quadro fallback e precisam colapsar num card só. Com roteamento ativo,
+    os tipos resolvem para list_ids distintos → um card por quadro.
+    """
+    mapa: dict[tuple[str, str], str] = {}
     for c in carded_contacts():
         chave = compute_person_key(c.get("phone"), c.get("email"))
-        if chave and chave not in mapa:
-            mapa[chave] = c["trello_card_id"]
+        if chave:
+            composta = (_list_id_for(c.get("transaction_type")), chave)
+            if composta not in mapa:
+                mapa[composta] = c["trello_card_id"]
     return mapa
 
 
@@ -294,16 +362,19 @@ def push_pending_leads(limit: int = 50) -> dict:
         for lead in pendentes:
             try:
                 chave = compute_person_key(lead.get("phone"), lead.get("email"))
-                if chave and chave in por_pessoa:
-                    card_id = por_pessoa[chave]
+                # Chave POR-QUADRO DE DESTINO: só deduplica contra um card do MESMO
+                # quadro resolvido (`_list_id_for`) — não do mesmo transaction_type cru.
+                composta = (_list_id_for(lead.get("transaction_type")), chave) if chave else None
+                if composta and composta in por_pessoa:
+                    card_id = por_pessoa[composta]
                     set_trello_card_id(lead["source"], lead["external_id"], card_id)
                     _link_to_existing_card(card_id, lead)
                     vinculados += 1
                     continue
                 card_id = create_card(lead)
                 set_trello_card_id(lead["source"], lead["external_id"], card_id)
-                if chave:
-                    por_pessoa[chave] = card_id
+                if composta:
+                    por_pessoa[composta] = card_id
                 criados += 1
             except Exception as exc:  # noqa: BLE001 — best-effort, segue para o próximo
                 falhas += 1
@@ -317,10 +388,11 @@ def push_pending_leads(limit: int = 50) -> dict:
 
 
 # ----------------------------------------------------------------------------
-# Setup do quadro (infra como código): garante quadro + listas + etiquetas
+# Setup dos quadros (infra como código): garante 2 quadros + listas + etiquetas
 # ----------------------------------------------------------------------------
-WORKSPACE_NAME = settings.trello_workspace_name
-BOARD_NAME = settings.trello_board_name
+# NB: os nomes de quadro/área são lidos de `settings` DENTRO de setup_board (não em
+# constantes de módulo) — capturá-los no import deixaria o valor stale e impediria
+# os testes de trocar `settings` por um fake via monkeypatch.
 PIPELINE = [
     "📥 Novos leads",
     "📞 Em contato",
@@ -334,13 +406,19 @@ SOURCE_LABELS = {"Wimóveis": "blue", "DFImóveis": "green"}
 # quadro: vermelho = quente, laranja = morno, azul-claro = frio.
 TEMPERATURE_LABELS = {"🔥 Quente": "red", "🌤️ Morno": "orange", "❄️ Frio": "sky"}
 BOARD_LABELS = {**SOURCE_LABELS, **TEMPERATURE_LABELS}
-# Nome da etiqueta -> variável do .env que guarda o ID dela (para o CLI imprimir).
+# Nome da etiqueta -> PREFIXO da env var do ID dela. O CLI acrescenta o sufixo do
+# quadro (_COMPRA/_ALUGUEL) para imprimir a env var por-quadro (Fase 2).
 _LABEL_ENV = {
     "Wimóveis": "TRELLO_LABEL_WIMOVEIS",
     "DFImóveis": "TRELLO_LABEL_DFIMOVEIS",
     "🔥 Quente": "TRELLO_LABEL_QUENTE",
     "🌤️ Morno": "TRELLO_LABEL_MORNO",
     "❄️ Frio": "TRELLO_LABEL_FRIO",
+}
+# Metadados de cada quadro para o CLI imprimir as env vars por-quadro do .env.
+_BOARD_ENV = {
+    "Compra": {"suffix": "_COMPRA", "list_env": "TRELLO_LIST_ID_COMPRA"},
+    "Aluguel": {"suffix": "_ALUGUEL", "list_env": "TRELLO_LIST_ID_ALUGUEL"},
 }
 
 
@@ -359,7 +437,9 @@ def _find_workspace_id(name: str) -> str | None:
     return None
 
 
-def _ensure_board(workspace_id: str) -> tuple[str, bool]:
+def _ensure_board(workspace_id: str, board_name: str) -> tuple[str, bool]:
+    """Garante um quadro por NOME na área de trabalho (idempotente). Chamado 1× por
+    quadro (Compra, Locação) — a busca por nome reaproveita o que já existir."""
     resp = requests.get(
         f"{_TRELLO_API}/members/me/boards",
         params={**_auth(), "fields": "name,idOrganization,closed"},
@@ -367,11 +447,11 @@ def _ensure_board(workspace_id: str) -> tuple[str, bool]:
     )
     resp.raise_for_status()
     for b in resp.json():
-        if b.get("idOrganization") == workspace_id and b["name"] == BOARD_NAME and not b.get("closed"):
+        if b.get("idOrganization") == workspace_id and b["name"] == board_name and not b.get("closed"):
             return b["id"], False
     novo = requests.post(
         f"{_TRELLO_API}/boards",
-        params={**_auth(), "name": BOARD_NAME, "idOrganization": workspace_id, "defaultLists": "false"},
+        params={**_auth(), "name": board_name, "idOrganization": workspace_id, "defaultLists": "false"},
         timeout=_TIMEOUT,
     )
     novo.raise_for_status()
@@ -425,17 +505,34 @@ def _ensure_labels(board_id: str) -> dict:
 
 
 def setup_board() -> dict:
-    """Idempotente: garante o quadro, as listas do funil e as etiquetas de origem."""
-    workspace_id = _find_workspace_id(WORKSPACE_NAME)
+    """Idempotente: garante OS DOIS quadros (Compra e Locação), cada um com as listas
+    do funil e as etiquetas de origem + temperatura.
+
+    A idempotência por-nome já existe em `_ensure_*`; a Fase 2 só aplica o mesmo
+    ensure 2×, um por `transaction_type`. Devolve um dict por quadro
+    (`{"Compra": {...}, "Aluguel": {...}}`) com board_id/listas/labels — o CLI usa
+    isso para imprimir as env vars por-quadro prontas pro `.env`.
+    """
+    workspace_id = _find_workspace_id(settings.trello_workspace_name)
     if not workspace_id:
-        raise RuntimeError(f"Area de trabalho '{WORKSPACE_NAME}' nao encontrada no Trello")
-    board_id, criado = _ensure_board(workspace_id)
-    return {
-        "board_id": board_id,
-        "board_criado": criado,
-        "listas": _ensure_lists(board_id),
-        "labels": _ensure_labels(board_id),
+        raise RuntimeError(
+            f"Area de trabalho '{settings.trello_workspace_name}' nao encontrada no Trello"
+        )
+    quadros = {
+        "Compra": settings.trello_board_name_compra,
+        "Aluguel": settings.trello_board_name_aluguel,
     }
+    resultado = {}
+    for chave, board_name in quadros.items():
+        board_id, criado = _ensure_board(workspace_id, board_name)
+        resultado[chave] = {
+            "board_name": board_name,
+            "board_id": board_id,
+            "board_criado": criado,
+            "listas": _ensure_lists(board_id),
+            "labels": _ensure_labels(board_id),
+        }
+    return resultado
 
 
 # ----------------------------------------------------------------------------
@@ -472,21 +569,20 @@ def _cli_push() -> None:
 
 
 def _cli_setup() -> None:
-    r = setup_board()
-    estado = "[criado]" if r["board_criado"] else "[ja existia]"
-    print(f"Board: {BOARD_NAME} (id={r['board_id']}) {estado}")
-    print("\nListas do funil:")
-    for nome, lid in r["listas"].items():
-        print(f"   {nome}  ->  {lid}")
-    print("\nEtiquetas (origem + temperatura):")
-    for nome, lid in r["labels"].items():
-        print(f"   {nome}  ->  {lid}")
-    print("\n>>> Coloque no .env:")
-    print(f"   TRELLO_LIST_ID={r['listas'].get('📥 Novos leads', '')}")
-    for nome, lid in r["labels"].items():
-        env = _LABEL_ENV.get(nome)
-        if env:
-            print(f"   {env}={lid}")
+    quadros = setup_board()
+    print(">>> IDs dos 2 quadros (Compra e Locação) — coloque no .env:\n")
+    for chave, q in quadros.items():
+        estado = "[criado]" if q["board_criado"] else "[ja existia]"
+        env = _BOARD_ENV[chave]
+        print(f"# Quadro {chave}: {q['board_name']} (id={q['board_id']}) {estado}")
+        # Lista de entrada do quadro (é o que ATIVA o roteamento daquele tipo).
+        print(f"   {env['list_env']}={q['listas'].get('📥 Novos leads', '')}")
+        # Etiquetas do quadro, com o sufixo por-quadro na env var.
+        for nome, lid in q["labels"].items():
+            base = _LABEL_ENV.get(nome)
+            if base:
+                print(f"   {base}{env['suffix']}={lid}")
+        print()
 
 
 if __name__ == "__main__":
