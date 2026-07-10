@@ -24,7 +24,7 @@ from fastapi.concurrency import run_in_threadpool
 from src.config import settings
 from src.db import insert_dead_letter, insert_lead
 from src.models import Lead, VrSyncLead
-from src.transform import build_clean
+from src.transform import build_clean, dfimoveis_operation
 from src.trello import push_pending_leads
 
 router = APIRouter(prefix="/webhook", tags=["ingestão"])
@@ -79,6 +79,19 @@ async def receber_lead_dfimoveis(
             status_code=422, detail=f"Payload inválido (guardado para revisão): {exc}"
         ) from exc
 
+    # Fase 1: resolve o tipo de operação (Compra/Aluguel) ANTES de montar o Lead, para
+    # gravá-lo no PRÓPRIO INSERT — fechando a janela em que um push concorrente veria o
+    # lead com tipo NULL e cardaria no quadro fallback errado. Empírico: os payloads
+    # reais do DFImóveis NÃO trazem `transactionType`; `dfimoveis_operation` prefere esse
+    # campo quando existe e cai numa heurística sobre o `clientListingId` do CRM (aluguel).
+    # Best-effort: uma resolução que falhe não pode derrubar a ingestão (tipo fica None →
+    # INSERT grava NULL).
+    tipo = None
+    try:
+        tipo = dfimoveis_operation(payload)
+    except Exception:  # noqa: BLE001 — enriquecimento; não derruba a ingestão
+        logger.exception("Falha ao resolver transaction_type para %s", vrsync.origin_lead_id)
+
     lead = Lead(
         external_id=vrsync.origin_lead_id,
         source="dfimoveis",
@@ -90,6 +103,7 @@ async def receber_lead_dfimoveis(
         lead_date=_parse_timestamp(vrsync.timestamp),
         raw_payload=json.dumps(payload, ensure_ascii=False),
         received_at=received_at,
+        transaction_type=tipo,
     )
 
     inserted = await run_in_threadpool(insert_lead, lead)

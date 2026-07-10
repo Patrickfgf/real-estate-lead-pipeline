@@ -164,9 +164,21 @@ def uf_to_regiao(uf: str | None) -> str | None:
 _TX_PT = {"SELL": "Compra", "RENT": "Aluguel"}
 # Planos de publicação do Wimóveis que indicam anúncio em posição de destaque.
 _DESTAQUE = {"DESTAQUE", "DESTACADO", "SUPER_DESTAQUE", "SUPERDESTAQUE", "TRIPLE", "PREMIUM", "TOP"}
+# Heurística do CRM (DFImóveis): "al" seguido de dígito ("al0001") marca aluguel.
+# Exige o dígito de propósito para NÃO pegar nomes de condomínio como "alpaineiras".
+_ALUGUEL_CRM_RE = re.compile(r"^al\d")
 
 
-def extract_extras(raw_payload: str | None) -> dict:
+def _as_dict(raw_payload: str | dict | None) -> dict:
+    """Parseia o payload (JSON str, dict ou None) para dict, tolerando lixo → {}."""
+    try:
+        d = json.loads(raw_payload) if isinstance(raw_payload, str) else (raw_payload or {})
+    except (ValueError, TypeError):
+        d = {}
+    return d if isinstance(d, dict) else {}
+
+
+def extract_extras(raw_payload: str | dict | None) -> dict:
     """Garimpa o `raw_payload` por campos úteis que não estão no lead canônico.
 
     - `transaction_type`: VrSync `transactionType` (SELL/RENT) → Compra/Aluguel
@@ -174,13 +186,7 @@ def extract_extras(raw_payload: str | None) -> dict:
     - `lead_origin`: VrSync `leadOrigin` (ex.: "Grupo OLX")
     - `is_destaque`: Wimóveis `planoDePublicacao` em posição premium
     """
-    try:
-        d = json.loads(raw_payload) if isinstance(raw_payload, str) else (raw_payload or {})
-    except (ValueError, TypeError):
-        d = {}
-    if not isinstance(d, dict):
-        d = {}
-
+    d = _as_dict(raw_payload)
     tx = (d.get("transactionType") or "").upper()
     plano = (d.get("planoDePublicacao") or "").upper()
     return {
@@ -189,6 +195,30 @@ def extract_extras(raw_payload: str | None) -> dict:
         "lead_origin": d.get("leadOrigin"),
         "is_destaque": bool(plano) and plano in _DESTAQUE,
     }
+
+
+def dfimoveis_operation(payload: str | dict | None) -> str | None:
+    """Resolve o tipo de operação (Compra/Aluguel) de um lead do DFImóveis.
+
+    Empírico: os payloads reais do DFImóveis NÃO trazem `transactionType` (0 de
+    101 leads em produção). O único sinal de aluguel é o `clientListingId` (código
+    do CRM da corretora). Por isso:
+
+    1. Preferência: se o payload traz `transactionType`, usa a mesma tradução do
+       `extract_extras` (SELL→Compra, RENT→Aluguel).
+    2. Fallback (heurística do CRM): normaliza o `clientListingId` (lower+strip) e
+       retorna "Aluguel" se contém "aluguel" OU casa a regex `^al\\d` ("al" + dígito).
+       Senão → None (indefinido). NÃO afirmamos "Compra" no fallback: um "CA"/"AP"
+       é o TIPO do imóvel (casa/apto), que pode ser pra alugar — o roteamento manda
+       o indefinido pro quadro de Compra/fallback.
+    """
+    tipo = extract_extras(payload)["transaction_type"]
+    if tipo is not None:
+        return tipo
+    client_listing_id = (_as_dict(payload).get("clientListingId") or "").strip().lower()
+    if "aluguel" in client_listing_id or _ALUGUEL_CRM_RE.match(client_listing_id):
+        return "Aluguel"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -325,10 +355,19 @@ CLEAN_COLUMNS = [
 def enrich(df: pd.DataFrame) -> pd.DataFrame:
     """Aplica as normalizações puras, devolvendo o df com as colunas derivadas."""
     df = df.copy()
+    # `transaction_type` pode chegar já PERSISTIDO da crua (Fase 1 — inclui o
+    # resultado da API Navent no Wimóveis). Tiramos a coluna antes do concat para
+    # não colidir com o `transaction_type` que `extract_extras` deriva do payload
+    # (concat cego criaria coluna duplicada e quebraria o reindex do build_clean).
+    persisted = df.pop("transaction_type") if "transaction_type" in df.columns else None
     phone = df["phone"].apply(normalize_phone).apply(pd.Series)
     email = df["email"].apply(normalize_email).apply(pd.Series)
     extras = df["raw_payload"].apply(extract_extras).apply(pd.Series)
     df = pd.concat([df, phone, email, extras], axis=1)
+    # Precedência: o valor persistido vence; o derivado do payload é só fallback
+    # onde o persistido é nulo (NaN quando a crua ainda não teve o tipo resolvido).
+    if persisted is not None:
+        df["transaction_type"] = persisted.where(persisted.notna(), df["transaction_type"])
 
     df["name_clean"] = df["name"].apply(clean_name)
     df["uf"] = df["phone_ddd"].apply(ddd_to_uf)

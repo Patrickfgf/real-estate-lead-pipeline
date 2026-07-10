@@ -16,6 +16,7 @@ from fastapi.concurrency import run_in_threadpool
 from src.config import settings
 from src.db import insert_dead_letter, insert_lead
 from src.models import Lead, WimoveisContato
+from src.navent_listings import fetch_operation
 from src.transform import build_clean, clean_message
 from src.trello import push_pending_leads
 
@@ -90,6 +91,20 @@ async def receber_lead_wimoveis(
         str(contato.id_navplat) if contato.id_navplat is not None else None
     )
 
+    # Fase 1: o callback do Wimóveis NÃO traz o tipo de operação — resolvemos via API
+    # Navent (idnavplat + codigoImobiliaria) ANTES de montar o Lead, para gravá-lo no
+    # PRÓPRIO INSERT e fechar a janela em que um push concorrente veria o lead com tipo
+    # NULL e cardaria no quadro fallback errado. `fetch_operation` é best-effort (sem
+    # token/em falha, devolve None sem tocar a rede); o try/except é a 2ª rede de segurança
+    # para não derrubar o webhook (tipo fica None → INSERT grava NULL).
+    tipo = None
+    try:
+        tipo = await run_in_threadpool(
+            fetch_operation, contato.id_navplat, contato.codigo_imobiliaria
+        )
+    except Exception:  # noqa: BLE001 — enriquecimento; não derruba a ingestão
+        logger.exception("Falha ao resolver transaction_type para %s", contato.id_evento)
+
     lead = Lead(
         external_id=contato.id_evento,
         source="wimoveis",
@@ -104,6 +119,7 @@ async def receber_lead_wimoveis(
         lead_date=_parse_data_registro(contato.data_registro),
         raw_payload=json.dumps(payload, ensure_ascii=False),
         received_at=received_at,
+        transaction_type=tipo,
     )
 
     inserted = await run_in_threadpool(insert_lead, lead)

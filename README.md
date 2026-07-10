@@ -15,8 +15,9 @@
 > leads from two Brazilian portals (**Wimóveis** via Navent's official callback,
 > **DFImóveis** via the VrSync webhook standard), validates and **deduplicates**
 > them (Pydantic + DuckDB, **raw → curated** layers in pandas, cross-portal entity
-> resolution), **scores** lead quality with business rules, and delivers each lead
-> as an idempotent **Trello** card plus a **Streamlit/Plotly** dashboard and a
+> resolution), **scores** lead quality with business rules, and **routes** each lead
+> by operation type (buy vs. rent) to its own **Trello** board as an idempotent card,
+> plus a **Streamlit/Plotly** dashboard and a
 > Jupyter **EDA**. Invalid payloads are never dropped — they land in a
 > **dead-letter** review box. **Stack:** Python · FastAPI · Pydantic · DuckDB ·
 > pandas · Trello API · Streamlit · Plotly · Faker · pytest · Ruff · GitHub Actions.
@@ -33,9 +34,10 @@ Pipeline de dados que **ingere leads de portais imobiliários** (**Wimóveis** v
 callback oficial da Navent e **DFImóveis** via webhook oficial padrão VrSync),
 valida, deduplica e persiste em **DuckDB** (camada crua), **limpa e enriquece**
 numa camada curada (pandas), pontua a qualidade do lead e os carrega no **Trello**
-(funil de vendas) e num **dashboard** — para que o time comercial atue rápido sem
-perder lead. Payloads que não validam não se perdem: vão para uma **caixa de
-revisão** (dead-letter) para inspeção e reprocessamento.
+— cada lead **roteado para o quadro de Compra ou de Locação** conforme o tipo de
+operação — e num **dashboard**, para que o time comercial atue rápido sem perder
+lead. Payloads que não validam não se perdem: vão para uma **caixa de revisão**
+(dead-letter) para inspeção e reprocessamento.
 
 > **Contexto de negócio.** Uma corretora em Brasília recebe leads pulverizados em
 > vários portais. Sem um ponto único, leads esfriam ou se perdem. O Jaré
@@ -51,33 +53,43 @@ revisão** (dead-letter) para inspeção e reprocessamento.
                                                    │  webhook HTTP (push)
   DFImóveis ─ webhook VrSync (GrupoZAP/OLX) ───────┤
                                                    ▼
-                                          ┌─────────────────┐
-                                          │  FastAPI         │  ingestão HTTP
-                                          │  + validação     │  (Pydantic: contrato do payload)
-                                          └────────┬─────────┘
-                                  válido  │        │  inválido
-                                          ▼        ▼
-                            ┌─────────────────┐  ┌────────────────────────┐
-                            │  DuckDB          │  │  caixa de revisão       │
-                            │  (leads_raw)     │  │  (leads_dead_letter)    │
-                            │  dedup idempot.  │  │  nada se perde          │
-                            └────────┬─────────┘  └────────────────────────┘
-                                     ▼
+                                      ┌─────────────────────────┐
+                                      │  FastAPI                 │  ingestão HTTP
+                                      │  + validação (Pydantic)  │
+                                      │  + resolve o tipo de     │  Compra / Aluguel:
+                                      │    operação             │  DFImóveis → payload VrSync
+                                      │    (Compra / Aluguel)    │  Wimóveis  → API Navent
+                                      └────────┬─────────────────┘
+                              válido  │        │  inválido
+                                      ▼        ▼
+                        ┌────────────────────┐  ┌────────────────────────┐
+                        │  DuckDB             │  │  caixa de revisão       │
+                        │  (leads_raw)        │  │  (leads_dead_letter)    │
+                        │  dedup idempot.     │  │  nada se perde          │
+                        │  + transaction_type │  └────────────────────────┘
+                        └────────┬────────────┘
+                                 ▼
               limpeza + enriquecimento (pandas) → leads_clean   ✅
                  → lead scoring (Quente / Morno / Frio)   ✅
-                                     ▼
-                       ┌──────────────┴──────────────┐
-                       ▼                              ▼
-               ┌───────────────┐            ┌──────────────────┐
-               │  Trello        │            │  Dashboard        │
-               │  (1 card/lead) │            │  (Streamlit)      │  ✅ add-on
-               └───────────────┘            └──────────────────┘
+                                 ▼
+                   ┌─────────────┴───────────────┐
+                   ▼                             ▼
+      ┌──────────────────────────────┐   ┌──────────────────┐
+      │  Trello — roteado por tipo    │   │  Dashboard        │
+      │  🛒 Compra  ·  🔑 Locação      │   │  (Streamlit)      │  ✅ add-on
+      │  tipo None → quadro único      │   └──────────────────┘
+      │  1 card/pessoa POR quadro      │
+      └──────────────────────────────┘
 ```
 
 Os dois portais entregam o lead por **push** (POST HTTP) na nossa rota — não há
-polling. A carga no Trello é **idempotente** e roda automaticamente quando um lead
-novo é ingerido (best-effort: falha na carga não derruba a ingestão). Todo POST que
-não passa na validação é guardado na **caixa de revisão** em vez de ser descartado.
+polling. O **tipo de operação** (Compra/Aluguel) é resolvido já na ingestão (ver
+abaixo) e persistido na crua. A carga no Trello é **idempotente** e roda
+automaticamente quando um lead novo é ingerido (best-effort: falha na carga não
+derruba a ingestão): cada lead é **roteado para o quadro do seu tipo** — Compra ou
+Locação — e o que não teve o tipo resolvido cai num **quadro único** de fallback.
+Todo POST que não passa na validação é guardado na **caixa de revisão** em vez de
+ser descartado.
 
 ---
 
@@ -91,7 +103,7 @@ não passa na validação é guardado na **caixa de revisão** em vez de ser des
 | Persistência | **DuckDB** | Banco analítico embarcado; dedup via `PRIMARY KEY` + caixa de revisão |
 | Limpeza / enriquecimento | **pandas** | Camada curada (`leads_clean`): normaliza telefone/e-mail, enriquece por DDD (UF/região), garimpa o `raw_payload` e deduplica a mesma pessoa entre portais |
 | Integração (saída) | **Trello REST API** (via `requests`) | Cria os cards no funil + "infra como código" do quadro |
-| Integração (entrada) | **Navent Open API** (via `requests`) | Cadastra/gerencia o callback de leads do Wimóveis |
+| Integração (entrada) | **Navent Open API** (via `requests`) | Cadastra/gerencia o callback de leads do Wimóveis **e resolve o tipo de operação** (Compra/Aluguel) do anúncio para o roteamento em 2 quadros |
 | Config | **python-dotenv** | Variáveis de ambiente / segredos fora do código |
 | Lead scoring | **pandas** (regras) | Pontua a qualidade do lead (0–100) e classifica a temperatura (Quente/Morno/Frio) pela rubrica do cliente — vira etiqueta no card |
 | Testes | **pytest** + **httpx** (`TestClient`) | Testes de ingestão, transform, carga e geração sintética, isolados de serviços externos |
@@ -111,6 +123,7 @@ não passa na validação é guardado na **caixa de revisão** em vez de ser des
 | — | Caixa de revisão (dead-letter) p/ payloads inválidos + logging de produção | ✅ |
 | — | Cliente da Navent Open API (cadastro do callback de leads) | ✅ |
 | 4 | Carga no Trello (1 card por lead, idempotente) + setup do quadro como código | ✅ |
+| — | Separação **Compra × Locação** em 2 quadros do Trello (roteamento por tipo de operação; tipo resolvido via API Navent no Wimóveis / payload no DFImóveis) + testes | ✅ |
 | 2 | Limpeza / enriquecimento → camada curada `leads_clean` (pandas) + dedup entre portais | ✅ |
 | 3 | Lead scoring (qualidade do lead → temperatura Quente/Morno/Frio + etiqueta no Trello) | ✅ |
 | 5 | Dashboard Streamlit + análise exploratória (EDA) — add-on de Data Analysis | ✅ |
@@ -136,7 +149,8 @@ não passa na validação é guardado na **caixa de revisão** em vez de ser des
 │   ├── ingest_wimoveis.py   # Rota FastAPI do webhook Wimóveis (callback CONTACTO da Navent)
 │   ├── ingest_dfimoveis.py  # Rota FastAPI do webhook DFImóveis (padrão VrSync / GrupoZAP)
 │   ├── navent.py            # Cliente da Navent Open API: cadastra o callback de leads (CLI)
-│   ├── trello.py            # Carga idempotente + setup do quadro (também é CLI)
+│   ├── navent_listings.py   # Resolve o tipo de operação (Compra/Aluguel) do anúncio via API Navent (Wimóveis)
+│   ├── trello.py            # Carga idempotente + roteamento por tipo (2 quadros) + setup dos quadros (também é CLI)
 │   ├── transform.py         # Camada curada + lead scoring (pandas) → leads_clean (CLI)
 │   ├── seed.py              # Gerador de dados sintéticos (Faker) p/ a demo/EDA (CLI)
 │   └── main.py              # App FastAPI (monta as rotas + /health + logging)
@@ -145,7 +159,11 @@ não passa na validação é guardado na **caixa de revisão** em vez de ser des
 │   ├── test_ingest_wimoveis.py
 │   ├── test_ingest_dfimoveis.py
 │   ├── test_navent.py
+│   ├── test_navent_listings.py  # Resolução do tipo via API Navent (parsing do título, best-effort)
 │   ├── test_trello.py
+│   ├── test_trello_routing.py   # Roteamento por 2 quadros + dedup por-quadro + setup dos 2 quadros
+│   ├── test_transaction_type.py # Persistência do transaction_type (grava no INSERT + backfill)
+│   ├── test_db_migration.py     # Migração idempotente da coluna (ADD COLUMN IF NOT EXISTS)
 │   ├── test_transform.py    # Normalização (telefone/e-mail), enriquecimento e dedup
 │   └── test_seed.py         # Gerador sintético: determinismo + monotonicidade do desfecho
 ├── samples/
@@ -382,17 +400,22 @@ temporais. Os gráficos são estáticos (matplotlib/seaborn) e já vêm **render
 
 1. Pegue sua **key** e **token** em https://trello.com/app-key e preencha
    `TRELLO_API_KEY` / `TRELLO_API_TOKEN` no `.env`.
-2. Crie/garanta o quadro, as listas do funil e as etiquetas — de **origem** (por
-   portal) e de **temperatura** (lead scoring) — de forma idempotente:
+2. Crie/garanta **os dois quadros** (Compra e Locação), cada um com as listas do
+   funil e as etiquetas — de **origem** (por portal) e de **temperatura** (lead
+   scoring) — de forma idempotente:
 
    ```powershell
-   python -m src.trello setup    # cria quadro + funil + etiquetas; imprime os IDs
+   python -m src.trello setup    # cria/garante os 2 quadros + funil + etiquetas; imprime os IDs
    ```
 
-   Copie os IDs sugeridos para o `.env`: `TRELLO_LIST_ID`, as de origem
-   (`TRELLO_LABEL_WIMOVEIS`, `TRELLO_LABEL_DFIMOVEIS`) e as de temperatura
-   (`TRELLO_LABEL_QUENTE`, `TRELLO_LABEL_MORNO`, `TRELLO_LABEL_FRIO`) — cada card
-   recebe a etiqueta da sua origem **e** a da sua temperatura. Comandos auxiliares:
+   O `setup` roda na **área de trabalho** `TRELLO_WORKSPACE_NAME` e imprime, por
+   quadro, as variáveis já com o sufixo `_COMPRA` / `_ALUGUEL` prontas pro `.env`:
+   a lista de entrada (`TRELLO_LIST_ID_COMPRA` / `TRELLO_LIST_ID_ALUGUEL`) e as
+   etiquetas por-quadro de origem (`TRELLO_LABEL_WIMOVEIS_*`, `TRELLO_LABEL_DFIMOVEIS_*`)
+   e de temperatura (`TRELLO_LABEL_QUENTE_*`, `TRELLO_LABEL_MORNO_*`, `TRELLO_LABEL_FRIO_*`).
+   Cada card recebe a etiqueta da sua origem **e** a da sua temperatura, **do quadro
+   de destino** (um id de etiqueta do Trello pertence a um único quadro). Comandos
+   auxiliares:
 
    ```powershell
    python -m src.trello check    # valida key/token (mostra o usuário autenticado)
@@ -402,11 +425,26 @@ temporais. Os gráficos são estáticos (matplotlib/seaborn) e já vêm **render
 
 3. Com o servidor recebendo leads, a carga é automática.
 
+### Roteamento Compra × Locação (2 quadros)
+
+Cada lead é **roteado para o quadro do seu `transaction_type`**: **Compra → quadro
+de Compra**, **Aluguel → quadro de Locação**. Quando o tipo é `None`/desconhecido
+(ex.: Wimóveis quando a Navent não resolveu), o lead cai num **quadro único de
+fallback** — o `TRELLO_LIST_ID` + as etiquetas antigas (`TRELLO_LABEL_WIMOVEIS`,
+`TRELLO_LABEL_DFIMOVEIS`, `TRELLO_LABEL_QUENTE/MORNO/FRIO`), que continuam servindo.
+
+> **Rollout seguro.** Enquanto `TRELLO_LIST_ID_COMPRA` / `TRELLO_LIST_ID_ALUGUEL`
+> estiverem vazios no `.env`, o roteamento fica **inativo** e **tudo** cai no quadro
+> único — o comportamento pré-feature é 100% preservado. Rodar o `setup` e preencher
+> as duas listas é o que **liga** o roteamento; nada quebra antes disso.
+
 A carga é **idempotente**: cada lead vira no máximo um card (vínculo em
 `leads_raw.trello_card_id` + marcador `jare-ext:<source>:<external_id>` na
-descrição do card). Além disso, a **mesma pessoa** (telefone/e-mail) entrando por
-mais de um portal é **consolidada num único card** — cada nova entrada vira um
-comentário no card existente, em vez de gerar cards duplicados.
+descrição do card). A dedup "uma pessoa, um card" agora é **por quadro**: quem
+manda um lead de **aluguel** e outro de **compra** aparece com **1 card em cada
+quadro**; a **mesma operação** vinda de dois portais continua sendo **1 card** +
+comentário. Cada nova entrada consolidada vira um comentário no card existente (e,
+se reentrar mais quente, **promove** a etiqueta de temperatura — nunca rebaixa).
 
 O card traz o **link clicável do anúncio** quando dá pra montá-lo a partir do
 callback (Wimóveis: a URL pública do imóvel, derivada do `idnavplat`) — senão,
@@ -439,6 +477,16 @@ python -m src.navent delete CONTACTO    # DELETE: desinscreve um evento
 A DFImóveis não tem cadastro por API: a URL `POST /webhook/dfimoveis?token=...` é
 informada no painel deles (padrão VrSync).
 
+> **Bônus do `NAVENT_TOKEN`.** O mesmo token de saída é reusado por
+> `src/navent_listings.py` para **resolver o tipo de operação** (Compra/Aluguel) de
+> cada lead do Wimóveis: como o callback CONTACTO não traz esse campo, a ingestão faz
+> **1 GET** ao resumo dos anúncios online (`.../anuncios/online/resumo?idAvisoNavplat=<idnavplat>`)
+> e deriva a operação do `titulo` do anúncio (venda → Compra; aluguel/locação →
+> Aluguel; ambíguo/sem termo → `None`). É **best-effort**: sem token, ou em qualquer
+> erro de rede/HTTP/formato, devolve `None` (o lead cai no quadro único) sem derrubar
+> a ingestão. O DFImóveis não precisa disso — o `transactionType` (SELL/RENT) já vem
+> no payload VrSync.
+
 ---
 
 ## Modelo de dados
@@ -452,6 +500,7 @@ Duas tabelas no DuckDB.
 | `source`, `external_id` | **Chave primária composta** — origem (`wimoveis`/`dfimoveis`) + ID na origem (`idEvento` no Wimóveis, `originLeadId` no DFImóveis) |
 | `name`, `email`, `phone`, `message` | Dados de contato do interessado |
 | `listing_ref`, `advertiser_code`, `agency_code` | Anúncio (Wimóveis: o `idnavplat` — ID do aviso na Navent, que sempre vem; ou `referencia` quando a corretora associou um código de CRM), anunciante e imobiliária |
+| `transaction_type` | Tipo de operação: **Compra** / **Aluguel** / `NULL` (não resolvido) — resolvido **na ingestão, antes do INSERT** (DFImóveis: do payload VrSync; Wimóveis: via API Navent). Define o quadro de destino no Trello |
 | `cpf` | Documento, quando informado |
 | `lead_date` | Quando o lead ocorreu na origem (`dataRegistro` / `timestamp`) |
 | `received_at` | Quando nós ingerimos |
@@ -475,7 +524,7 @@ Duas tabelas no DuckDB.
 | `email_clean`, `email_valid`, `email_domain` | E-mail normalizado, validade e domínio |
 | `phone_e164`, `phone_ddd`, `phone_is_mobile`, `phone_valid` | Telefone em E.164, DDD, fixo/celular e validade |
 | `uf`, `regiao` | Unidade federativa e região, derivadas do DDD |
-| `transaction_type`, `portal_temperature`, `lead_origin`, `is_destaque` | Campos garimpados do `raw_payload` |
+| `transaction_type`, `portal_temperature`, `lead_origin`, `is_destaque` | Campos garimpados do `raw_payload` — exceto `transaction_type`, que **prioriza o valor persistido em `leads_raw`** (Wimóveis via Navent) e só usa o derivado do payload como fallback quando o persistido é nulo |
 | `person_key`, `is_primary`, `is_duplicate`, `cross_portal` | Dedup de identidade: chave da pessoa, primário vs. duplicado e se cruza portais |
 | `listing_intent`, `lead_score`, `lead_temperature` | Lead scoring (Fase 3): tem intenção num anúncio, pontuação 0–100 e temperatura (Quente/Morno/Frio) |
 
@@ -540,9 +589,36 @@ Duas tabelas no DuckDB.
   de abrir um 2º card — assim dois corretores não ligam para o mesmo interessado.
   Se o lead **reentra mais quente** (ex.: antes só e-mail, agora referencia um
   anúncio), a etiqueta de temperatura do card é **promovida** — nunca rebaixada.
-- **"Infra como código" do quadro Trello**: `setup_board()` garante quadro,
-  listas do funil e etiquetas de origem (por portal) de forma idempotente —
-  reprodutível, sem cliques.
+- **Roteamento Compra × Locação em 2 quadros, com rollout seguro**: cada card vai
+  para o quadro do seu `transaction_type` (Compra/Locação); tipo `None`/desconhecido
+  cai num **quadro único de fallback**. Há **um só ponto de decisão** (`_board_attrs`)
+  que resolve lista **e** etiquetas do **mesmo** quadro — necessário porque um id de
+  etiqueta do Trello pertence a um único quadro (misturar ids deixaria o card sem
+  etiqueta). O roteamento só liga quando o `list id` do quadro dedicado está no `.env`:
+  enquanto vazio, tudo cai no fallback e o comportamento anterior é 100% preservado
+  (feature flag implícita por configuração, sem branch morto).
+- **Tipo de operação resolvido na origem, antes do INSERT**: o `transaction_type`
+  nasce junto do lead — DFImóveis lê do payload VrSync (`SELL/RENT`), Wimóveis chama
+  a **API Navent** (`navent_listings.fetch_operation`, 1 GET, tipo derivado do
+  `titulo`). Resolver **antes** de gravar fecha a janela em que um push concorrente
+  veria o lead com tipo `NULL` e o cardaria no quadro errado. A chamada à Navent é
+  **best-effort** (sem token/em falha → `None`, cai no fallback) e nunca derruba o
+  webhook. *Alternativa descartada:* resolver o tipo só no rebuild da camada curada
+  (`leads_clean`) — mais simples, mas abriria essa janela de inconsistência com a
+  carga do Trello, que dispara a cada webhook.
+- **Dedup de identidade por-quadro**: "uma pessoa, um card" passa a ser **por quadro
+  de destino** — a chave de dedup combina `(quadro resolvido, chave-da-pessoa)`. Assim
+  quem manda lead de aluguel **e** de compra ganha 1 card em **cada** quadro, mas a
+  mesma operação vinda de 2 portais continua num card só. Chavear pelo quadro
+  *resolvido* (não pelo `transaction_type` cru) mantém o colapso correto quando o
+  roteamento está inativo (Compra e Aluguel caindo no mesmo fallback).
+- **Migração de schema idempotente**: a coluna `transaction_type` entra via
+  `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` no boot — no-op em banco novo (o schema
+  já a cria) e não-destrutiva nos bancos de produção criados antes da feature.
+- **"Infra como código" dos 2 quadros Trello**: `setup_board()` garante **os dois
+  quadros** (Compra e Locação), cada um com as listas do funil e as etiquetas de
+  origem + temperatura, de forma idempotente (reaplica o mesmo `ensure` por quadro) —
+  reprodutível, sem cliques; o CLI imprime as env vars por-quadro prontas pro `.env`.
 - **Callback da Navent por código**: `src/navent.py` cadastra/gerencia o callback
   via API, separando claramente o token de *saída* (chamar a Navent) do segredo de
   *entrada* (que a Navent reenvia para nós) — sem configuração manual no painel.
@@ -555,7 +631,7 @@ Duas tabelas no DuckDB.
 
 ```powershell
 pip install -r requirements-dev.txt
-pytest                      # 73 testes, isolados de serviços externos
+pytest                      # 134 testes, isolados de serviços externos
 ```
 
 Cobre a ingestão dos dois portais (health *deep check*, validação de segredo,
@@ -566,7 +642,14 @@ card**, **carga concorrente serializada** — sem card duplicado sob rajada — 
 **etiqueta de temperatura**) e a camada curada (normalização de telefone/e-mail,
 **validação de DDD** (0800/internacional → inválido), enriquecimento por DDD, garimpo
 do `raw_payload`, **dedup determinístico** entre portais e **lead scoring** —
-hierarquia da rubrica e faixas de temperatura). Cobre também o **gerador sintético**
+hierarquia da rubrica e faixas de temperatura). Cobre ainda a **separação Compra ×
+Locação**: **resolução do tipo via API Navent** (parsing do `titulo`, casos ambíguo/
+sem termo, best-effort à prova de falha), **roteamento por 2 quadros** (Compra→Compra,
+Aluguel→Locação, `None`→quadro único, e o fallback quando as env vars novas estão
+vazias), **dedup por-quadro** (1 card por quadro; mesma operação de 2 portais num card
+só; `None` não deduplica contra operação real; concorrência serializada), o **setup
+dos 2 quadros** e a **persistência do `transaction_type`** (gravado no próprio INSERT,
+backfill e migração idempotente da coluna). Cobre também o **gerador sintético**
 (`src/seed.py`): determinismo (mesma seed → mesmos dados) e **monotonicidade** do
 desfecho simulado (lead mais quente converte mais e é respondido mais rápido).
 
