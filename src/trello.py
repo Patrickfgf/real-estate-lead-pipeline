@@ -71,7 +71,10 @@ def _card_name(lead: dict) -> str:
 def _anuncio_line(lead: dict) -> str:
     """Linha do anúncio no card: link clicável quando temos a URL pública do portal;
     senão o código de referência (ou — quando não há nenhum)."""
-    url = listing_url(lead.get("source", ""), lead.get("listing_ref"))
+    # Precedência: a URL que o portal ENVIOU (DFImóveis, já validada na ingestão) vence
+    # a que nós CONSTRUÍMOS do listing_ref (Wimóveis). Portais que não mandam URL nem
+    # têm template continuam caindo na referência crua.
+    url = lead.get("listing_url") or listing_url(lead.get("source", ""), lead.get("listing_ref"))
     if url:
         return f"- 🔗 Anúncio: {url}"
     return f"- 🏢 Anúncio (ref): {lead.get('listing_ref') or '—'}"

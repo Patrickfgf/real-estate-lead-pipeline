@@ -180,6 +180,35 @@ def test_card_desc_mostra_link_do_anuncio_wimoveis():
     assert "https://www.wimoveis.com.br/propriedades/imovel-3026198578.html" in desc
 
 
+def test_card_desc_mostra_link_do_anuncio_dfimoveis():
+    """No DFImóveis a URL não é montada: ela vem pronta do payload (coluna listing_url).
+
+    O link tem que aparecer mesmo com listing_ref alfanumérico ("Plano500"), que é o
+    código do CRM e NÃO compõe a URL pública.
+    """
+    lead = {
+        "source": "dfimoveis", "external_id": "1", "name": "F", "email": None,
+        "phone": None, "message": None, "listing_ref": "Plano500",
+        "listing_url": "https://www.dfimoveis.com.br/meta/247550",
+        "advertiser_code": None, "agency_code": None, "lead_date": None, "received_at": None,
+    }
+    desc = trello._card_desc(lead)
+    assert "🔗 Anúncio: https://www.dfimoveis.com.br/meta/247550" in desc
+
+
+def test_card_desc_dfimoveis_sem_listing_url_mantem_a_referencia():
+    """Sem URL no payload (formato antigo), o card volta a mostrar só o código."""
+    lead = {
+        "source": "dfimoveis", "external_id": "1", "name": "F", "email": None,
+        "phone": None, "message": None, "listing_ref": "Plano500",
+        "listing_url": None,
+        "advertiser_code": None, "agency_code": None, "lead_date": None, "received_at": None,
+    }
+    desc = trello._card_desc(lead)
+    assert "🏢 Anúncio (ref): Plano500" in desc
+    assert "🔗" not in desc
+
+
 def test_card_desc_mostra_portal_de_origem():
     """O card deve indicar o portal certo (Wimóveis vs DFImóveis)."""
     base = {

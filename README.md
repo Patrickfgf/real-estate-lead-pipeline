@@ -168,7 +168,8 @@ ser descartado.
 │   └── test_seed.py         # Gerador sintético: determinismo + monotonicidade do desfecho
 ├── samples/
 │   ├── wimoveis_lead.json   # Payload de exemplo (Wimóveis) para teste manual
-│   └── dfimoveis_lead.json  # Payload de exemplo (DFImóveis / VrSync) para teste manual
+│   ├── dfimoveis_lead.json  # Payload DFImóveis/VrSync no formato da doc do GrupoZAP (SELL, sem URL)
+│   └── dfimoveis_lead_v2.json # Formato REAL desde 2026-08: `listingUrl` na raiz + `SALE`
 ├── dashboard/
 │   └── app.py               # Dashboard Streamlit (add-on Fase 5) sobre leads_clean
 ├── notebooks/
@@ -279,7 +280,7 @@ O transform (`src/transform.py`) faz, com funções puras e testadas:
 - **Nome:** colapsa espaços e capitaliza, mantendo partículas (`de`/`da`/`do`).
 - **Geografia:** do DDD deriva **UF** e **região** (ex.: 61 → DF / Centro-Oeste).
 - **Garimpo do `raw_payload`:** extrai campos que não estão no lead canônico —
-  tipo de transação (`SELL`→Compra / `RENT`→Aluguel), temperatura do portal
+  tipo de transação (`SELL`/`SALE`→Compra, `RENT`/`RENTAL`→Aluguel), temperatura do portal
   (sinal para o scoring), origem e *anúncio em destaque* (Wimóveis).
 - **Dedup entre portais (entity-resolution-lite):** a mesma pessoa (mesmo
   telefone/e-mail) que entrou no Wimóveis **e** na DFImóveis é agrupada; o lead
@@ -484,8 +485,11 @@ informada no painel deles (padrão VrSync).
 > e deriva a operação do `titulo` do anúncio (venda → Compra; aluguel/locação →
 > Aluguel; ambíguo/sem termo → `None`). É **best-effort**: sem token, ou em qualquer
 > erro de rede/HTTP/formato, devolve `None` (o lead cai no quadro único) sem derrubar
-> a ingestão. O DFImóveis não precisa disso — o `transactionType` (SELL/RENT) já vem
-> no payload VrSync.
+> a ingestão. O DFImóveis não precisa disso — o `transactionType` já vem
+> no payload VrSync. **Atenção ao vocabulário:** a doc do GrupoZAP documenta
+> `SELL`/`RENT`, mas desde 2026-08 a DFImóveis manda `SALE`. O mapa `_TX_PT`
+> (`src/transform.py`) aceita os dois pares de propósito — um sinônimo a mais
+> nunca classifica errado, e sem ele o lead cairia em `NULL` e perderia o quadro.
 
 ---
 
@@ -501,6 +505,7 @@ Duas tabelas no DuckDB.
 | `name`, `email`, `phone`, `message` | Dados de contato do interessado |
 | `listing_ref`, `advertiser_code`, `agency_code` | Anúncio (Wimóveis: o `idnavplat` — ID do aviso na Navent, que sempre vem; ou `referencia` quando a corretora associou um código de CRM), anunciante e imobiliária |
 | `transaction_type` | Tipo de operação: **Compra** / **Aluguel** / `NULL` (não resolvido) — resolvido **na ingestão, antes do INSERT** (DFImóveis: do payload VrSync; Wimóveis: via API Navent). Define o quadro de destino no Trello |
+| `listing_url` | URL pública do anúncio, **quando o portal a envia** (DFImóveis, desde 2026-08 — campo `listingUrl`). Validada na borda por `safe_dfimoveis_listing_url` antes de virar link clicável no card; `NULL` quando ausente ou reprovada. O Wimóveis não usa: lá a URL é *construída* a partir do `idnavplat` |
 | `cpf` | Documento, quando informado |
 | `lead_date` | Quando o lead ocorreu na origem (`dataRegistro` / `timestamp`) |
 | `received_at` | Quando nós ingerimos |
@@ -598,7 +603,7 @@ Duas tabelas no DuckDB.
   enquanto vazio, tudo cai no fallback e o comportamento anterior é 100% preservado
   (feature flag implícita por configuração, sem branch morto).
 - **Tipo de operação resolvido na origem, antes do INSERT**: o `transaction_type`
-  nasce junto do lead — DFImóveis lê do payload VrSync (`SELL/RENT`), Wimóveis chama
+  nasce junto do lead — DFImóveis lê do payload VrSync (`SELL`/`SALE`, `RENT`/`RENTAL`), Wimóveis chama
   a **API Navent** (`navent_listings.fetch_operation`, 1 GET, tipo derivado do
   `titulo`). Resolver **antes** de gravar fecha a janela em que um push concorrente
   veria o lead com tipo `NULL` e o cardaria no quadro errado. A chamada à Navent é

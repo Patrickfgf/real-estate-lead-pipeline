@@ -13,6 +13,11 @@ SECRET = "segredo-de-teste"  # mesmo valor do conftest.py (DFIMOVEIS_WEBHOOK_SEC
 _SAMPLE_PATH = Path(__file__).resolve().parents[1] / "samples" / "dfimoveis_lead.json"
 SAMPLE = json.loads(_SAMPLE_PATH.read_text(encoding="utf-8"))
 
+# Formato entregue pela DFImóveis em 2026-08 (ajuste que pedimos): traz `listingUrl` na
+# RAIZ e `transactionType: "SALE"` no lugar do "SELL" da doc do GrupoZAP.
+_SAMPLE_V2_PATH = Path(__file__).resolve().parents[1] / "samples" / "dfimoveis_lead_v2.json"
+SAMPLE_V2 = json.loads(_SAMPLE_V2_PATH.read_text(encoding="utf-8"))
+
 
 def test_rejeita_sem_segredo():
     resp = client.post("/webhook/dfimoveis", json=SAMPLE)
@@ -99,7 +104,8 @@ def test_transaction_type_ausente_nao_quebra_e_fica_nulo():
 
 
 def test_transaction_type_aluguel_pelo_client_listing_id_sem_transaction_type():
-    """Empírico: os payloads reais do DFImóveis não trazem transactionType. O único
+    """Histórico: até 2026-08 os payloads reais do DFImóveis não traziam transactionType
+    (hoje trazem — ver os testes do formato v2 no fim do arquivo). O único
     sinal de aluguel é o clientListingId do CRM — 'al0001' resolve para 'Aluguel'."""
     lead = {**SAMPLE, "originLeadId": "df-al-crm", "clientListingId": "al0001"}
     lead.pop("transactionType", None)
@@ -140,3 +146,83 @@ def test_payload_invalido_vai_para_caixa_de_revisao():
     assert row is not None
     assert row[0] == "dfimoveis"
     assert marcador in row[1]
+
+
+# ---------------------------------------------------------------------------
+# Formato novo (2026-08): listingUrl na raiz + transactionType "SALE"
+# ---------------------------------------------------------------------------
+def test_v2_transaction_type_sale_vira_compra():
+    """"SALE" (o que a DFImóveis manda) tem que classificar igual a "SELL" (o que a doc diz).
+
+    Sem isso o tipo fica NULL e o lead perde o quadro de Compra no roteamento.
+    """
+    lead = {**SAMPLE_V2, "originLeadId": "df-v2-sale"}
+    assert lead["transactionType"] == "SALE"
+    resp = client.post("/webhook/dfimoveis", params={"token": SECRET}, json=lead)
+    assert resp.status_code == 200
+    row = get_connection().execute(
+        "SELECT transaction_type FROM leads_raw WHERE source='dfimoveis' AND external_id=?",
+        ["df-v2-sale"],
+    ).fetchone()
+    assert row[0] == "Compra"
+
+
+def test_v2_listing_url_persistida_do_payload():
+    """O campo `listingUrl` do payload é validado na borda e gravado em coluna própria."""
+    lead = {**SAMPLE_V2, "originLeadId": "df-v2-url"}
+    client.post("/webhook/dfimoveis", params={"token": SECRET}, json=lead)
+    row = get_connection().execute(
+        "SELECT listing_url, listing_ref FROM leads_raw WHERE source='dfimoveis' AND external_id=?",
+        ["df-v2-url"],
+    ).fetchone()
+    assert row[0] == "https://www.dfimoveis.com.br/meta/247550"
+    # o listing_ref segue sendo o clientListingId — id DIFERENTE do que compõe a URL
+    assert row[1] == "Plano500"
+
+
+def test_v2_listing_url_de_outro_dominio_e_descartada():
+    """URL fora do domínio do portal não vira link no card do corretor (anti-phishing)."""
+    lead = {**SAMPLE_V2, "originLeadId": "df-v2-url-ruim",
+            "listingUrl": "https://dfimoveis.com.br.golpe.tld/meta/247550"}
+    resp = client.post("/webhook/dfimoveis", params={"token": SECRET}, json=lead)
+    assert resp.status_code == 200  # não derruba a ingestão; só não confia na URL
+    row = get_connection().execute(
+        "SELECT listing_url FROM leads_raw WHERE source='dfimoveis' AND external_id=?",
+        ["df-v2-url-ruim"],
+    ).fetchone()
+    assert row[0] is None
+
+
+def test_lead_sem_listing_url_continua_funcionando():
+    """Retrocompatibilidade: o formato antigo (sem listingUrl) segue ingerindo normal."""
+    lead = {**SAMPLE, "originLeadId": "df-sem-url"}
+    assert "listingUrl" not in lead
+    resp = client.post("/webhook/dfimoveis", params={"token": SECRET}, json=lead)
+    assert resp.status_code == 200
+    row = get_connection().execute(
+        "SELECT listing_url FROM leads_raw WHERE source='dfimoveis' AND external_id=?",
+        ["df-sem-url"],
+    ).fetchone()
+    assert row[0] is None
+
+
+def test_v2_listing_url_mal_tipada_nao_derruba_o_lead():
+    """Um `listingUrl` que não seja string não pode mandar o lead para a dead-letter.
+
+    Regressão do caminho crítico: antes do field_validator, `listingUrl: 247550` (o id
+    numérico em vez da URL) levantava ValidationError → 422 → lead inteiro na caixa de
+    revisão, perdendo nome/telefone/e-mail do fluxo normal. Perder a URL é aceitável;
+    perder o lead não.
+    """
+    for i, valor in enumerate([247550, {"href": "x"}, ["x"], ""]):
+        ext = f"df-v2-url-tipo-{i}"
+        lead = {**SAMPLE_V2, "originLeadId": ext, "listingUrl": valor}
+        resp = client.post("/webhook/dfimoveis", params={"token": SECRET}, json=lead)
+        assert resp.status_code == 200, f"{valor!r} derrubou a ingestão"
+        row = get_connection().execute(
+            "SELECT listing_url, name FROM leads_raw WHERE source='dfimoveis' AND external_id=?",
+            [ext],
+        ).fetchone()
+        assert row is not None, f"{valor!r} não gravou o lead"
+        assert row[0] is None  # URL descartada...
+        assert row[1] == SAMPLE_V2["name"]  # ...mas o lead está lá, íntegro

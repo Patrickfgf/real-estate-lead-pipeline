@@ -24,6 +24,7 @@ from src.transform import (
     listing_url,
     normalize_email,
     normalize_phone,
+    safe_dfimoveis_listing_url,
     score_lead,
     score_to_temperature,
     uf_to_regiao,
@@ -191,8 +192,10 @@ def test_extras_aluguel_e_payload_quebrado():
 # --------------------------------------------------------------------------
 # dfimoveis_operation — tipo de operação (Compra/Aluguel) do DFImóveis
 # --------------------------------------------------------------------------
-# Motivo empírico: os payloads reais do DFImóveis NÃO trazem transactionType
-# (0 de 101 leads). O único sinal de aluguel é o clientListingId (código do CRM
+# Motivo empírico: até 2026-08 os payloads reais do DFImóveis NÃO traziam
+# transactionType (0 de 101 leads) — desde então trazem, com o valor "SALE" (ver o
+# teste do vocabulário abaixo). O fallback segue valendo para os leads que não o
+# tragam: o sinal de aluguel é o clientListingId (código do CRM
 # da corretora). A função prefere transactionType quando presente e, senão, cai
 # numa heurística sobre o clientListingId.
 def test_dfimoveis_operation_prefere_transaction_type():
@@ -203,6 +206,23 @@ def test_dfimoveis_operation_prefere_transaction_type():
     assert dfimoveis_operation(
         {"transactionType": "SELL", "clientListingId": "al0001"}
     ) == "Compra"
+
+
+def test_dfimoveis_operation_aceita_vocabulario_alternativo():
+    """A DFImóveis passou a mandar SALE (2026-08) onde a doc do GrupoZAP diz SELL.
+
+    O mapa é tolerante de propósito: aceitar um sinônimo a mais nunca classifica
+    errado — só resolve um caso que hoje cairia em None e iria pro quadro fallback.
+    """
+    assert dfimoveis_operation({"transactionType": "SALE"}) == "Compra"
+    assert dfimoveis_operation({"transactionType": "RENTAL"}) == "Aluguel"
+    # minúsculas também (o mapa normaliza com .upper())
+    assert dfimoveis_operation({"transactionType": "sale"}) == "Compra"
+    # o tipo explícito vence a heurística do clientListingId, igual ao SELL
+    assert dfimoveis_operation({"transactionType": "SALE", "clientListingId": "al0001"}) == "Compra"
+    # e chega até a camada curada
+    assert extract_extras('{"transactionType": "SALE"}')["transaction_type"] == "Compra"
+    assert extract_extras('{"transactionType": "RENTAL"}')["transaction_type"] == "Aluguel"
 
 
 def test_dfimoveis_operation_fallback_aluguel_pelo_client_listing_id():
@@ -294,10 +314,89 @@ def test_listing_url_wimoveis_codigo_alfanumerico_nao_vira_url():
     assert listing_url("wimoveis", "AP-ASA-SUL-2Q-123") is None
 
 
-def test_listing_url_dfimoveis_pendente_retorna_none():
-    # o id interno do DFImóveis não vem no webhook — sem link até confirmar a fonte
+def test_listing_url_nao_monta_url_de_dfimoveis():
+    # A URL do DFImóveis NÃO é montada a partir do listing_ref: ela chega pronta no
+    # payload (campo `listingUrl`) e é persistida em coluna própria. Além disso o
+    # listing_ref guarda o clientListingId (código do CRM, ex. "Plano500"), que não é
+    # o id que compõe a URL pública (esse é o originListingId). Montar daqui daria link errado.
     assert listing_url("dfimoveis", "87027856") is None
     assert listing_url("dfimoveis", "CASA-LAGO-SUL-3Q-456") is None
+
+
+# ---------------------------------------------------------------------------
+# safe_dfimoveis_listing_url — a URL vem de FORA (payload de terceiro) e vira link
+# clicável no card do corretor, então passa por allowlist antes de ser aceita.
+# ---------------------------------------------------------------------------
+def test_safe_dfimoveis_listing_url_aceita_url_canonica():
+    url = "https://www.dfimoveis.com.br/meta/247550"
+    assert safe_dfimoveis_listing_url(url) == url
+    # a forma longa (com slug) também é válida
+    longa = "https://www.dfimoveis.com.br/imovel/apartamento-3-quartos-venda-noroeste-1415858"
+    assert safe_dfimoveis_listing_url(longa) == longa
+    # subdomínio do portal é aceito
+    assert safe_dfimoveis_listing_url("https://m.dfimoveis.com.br/meta/1") is not None
+    # apex sem www
+    assert safe_dfimoveis_listing_url("https://dfimoveis.com.br/meta/1") is not None
+
+
+def test_safe_dfimoveis_listing_url_rejeita_host_de_fora():
+    # o caso perigoso: host que apenas CONTÉM o domínio (checagem por `in` aceitaria)
+    assert safe_dfimoveis_listing_url("https://dfimoveis.com.br.golpe.tld/meta/1") is None
+    assert safe_dfimoveis_listing_url("https://naodfimoveis.com.br/meta/1") is None
+    assert safe_dfimoveis_listing_url("https://exemplo.com/meta/1") is None
+
+
+def test_safe_dfimoveis_listing_url_rejeita_esquema_inseguro():
+    assert safe_dfimoveis_listing_url("http://www.dfimoveis.com.br/meta/1") is None  # sem TLS
+    assert safe_dfimoveis_listing_url("javascript:alert(1)") is None
+    assert safe_dfimoveis_listing_url("data:text/html,<b>x</b>") is None
+    assert safe_dfimoveis_listing_url("//www.dfimoveis.com.br/meta/1") is None  # sem esquema
+
+
+def test_safe_dfimoveis_listing_url_rejeita_lixo_e_abuso():
+    assert safe_dfimoveis_listing_url(None) is None
+    assert safe_dfimoveis_listing_url("") is None
+    assert safe_dfimoveis_listing_url("   ") is None
+    assert safe_dfimoveis_listing_url(12345) is None  # tipo errado não quebra
+    # newline forjaria linhas falsas na descrição do card do Trello
+    assert safe_dfimoveis_listing_url("https://www.dfimoveis.com.br/meta/1\n- 👤 Nome: Falso") is None
+    assert safe_dfimoveis_listing_url("https://www.dfimoveis.com.br/meta/1\r\nX") is None
+    # URL absurdamente longa polui o card
+    assert safe_dfimoveis_listing_url("https://www.dfimoveis.com.br/meta/" + "9" * 400) is None
+
+
+def test_safe_dfimoveis_listing_url_rejeita_divergencia_de_parser():
+    """A barra invertida faz urlparse e navegador discordarem sobre o host.
+
+    "https://evil.tld\\@www.dfimoveis.com.br/x" tem hostname "www.dfimoveis.com.br"
+    para o urlparse (RFC 3986) e "evil.tld" para o Chrome (WHATWG, que normaliza \\ → /
+    antes de separar a autoridade). Aceitar isso seria validar um host e mandar o
+    corretor para outro — bypass completo da allowlist.
+    """
+    assert safe_dfimoveis_listing_url("https://evil.tld\\@www.dfimoveis.com.br/x") is None
+    assert safe_dfimoveis_listing_url("https://www.dfimoveis.com.br\\@evil.tld/x") is None
+    # userinfo comum (sem barra invertida) os dois parsers já leem igual — e é rejeitado
+    assert safe_dfimoveis_listing_url("https://www.dfimoveis.com.br@evil.tld/x") is None
+
+
+def test_safe_dfimoveis_listing_url_rejeita_invisiveis_unicode():
+    """Separadores e controles invisíveis: quebram linha no card ou disfarçam o destino."""
+    base = "https://www.dfimoveis.com.br/meta/1"
+    assert safe_dfimoveis_listing_url(base + "\u2028- 👤 Nome: Falso") is None  # LINE SEPARATOR
+    assert safe_dfimoveis_listing_url(base + "\u2029x") is None  # PARAGRAPH SEPARATOR
+    assert safe_dfimoveis_listing_url(base + "\u202e" + "gpj.exe") is None  # RLO (spoof visual)
+    assert safe_dfimoveis_listing_url(base + "\u0085x") is None  # NEL (C1)
+
+
+def test_safe_dfimoveis_listing_url_normaliza_host_maiusculo():
+    """Host em maiúsculas é a mesma origem — tem que ser aceito, não rejeitado."""
+    assert safe_dfimoveis_listing_url("https://WWW.DFIMOVEIS.COM.BR/meta/1") is not None
+
+
+def test_safe_dfimoveis_listing_url_faz_trim():
+    assert safe_dfimoveis_listing_url("  https://www.dfimoveis.com.br/meta/1  ") == (
+        "https://www.dfimoveis.com.br/meta/1"
+    )
 
 
 def test_listing_url_sem_ref_retorna_none():
