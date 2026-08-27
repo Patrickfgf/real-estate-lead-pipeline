@@ -24,3 +24,20 @@ _private/
 
 # One-pager de portfólio (mantido fora do repo a pedido; serve ao CV, não ao código)
 Projeto_Jare_CV.html
+
+# Notas locais com valores REAIS (tokens, secrets espelhados de produção, respostas de
+# portais). O padrão cobre .md/.json/.yaml — e vive aqui, versionado, de propósito: o
+# .git/info/exclude protege só o clone onde foi escrito, e este projeto é tocado em mais
+# de uma máquina.
+*.local.*
+
+# Materiais comerciais/estratégicos do cliente — local-only, jamais no repo público
+# (propostas com preço, panoramas, kits de marca com CRECI/endereço/telefones/PII).
+Proposta_*.pdf
+Caminho_*.pdf
+Panorama_*.docx
+scratch_linkedin/
+.scratch/
+
+# Artefatos temporários de automação de browser (screenshots, traces)
+.playwright-mcp/
