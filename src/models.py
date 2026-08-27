@@ -6,7 +6,7 @@
 """
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class WimoveisContato(BaseModel):
@@ -58,6 +58,24 @@ class VrSyncLead(BaseModel):
     message: str | None = None
     temperature: str | None = None  # Baixa/Média/Alta — útil na Fase 3 (lead scoring)
     transaction_type: str | None = Field(default=None, alias="transactionType")
+    # URL pública do anúncio. Campo NÃO-canônico do VrSync: a DFImóveis o adicionou
+    # em 2026-08 a nosso pedido (a doc do GrupoZAP não o lista). Por isso é opcional
+    # e passa por validação de domínio antes de virar link no card.
+    listing_url: str | None = Field(default=None, alias="listingUrl")
+
+    @field_validator("listing_url", mode="before")
+    @classmethod
+    def _tolera_listing_url_nao_string(cls, v: object) -> str | None:
+        """Um `listingUrl` de tipo inesperado vira None em vez de invalidar o lead.
+
+        Sem isso, um `listingUrl: 247550` (o id numérico em vez da URL) levantaria
+        ValidationError e mandaria o lead INTEIRO — nome, telefone, e-mail — para a
+        caixa de revisão, com 422 para o portal. Perder a URL é aceitável; perder o
+        lead não. É justamente o campo mais novo e o único não-canônico do VrSync,
+        logo o mais provável de vir com formato inconsistente. O valor cru continua
+        no `raw_payload`.
+        """
+        return v if isinstance(v, str) else None
 
     @property
     def telefone_completo(self) -> str | None:
@@ -90,3 +108,4 @@ class Lead(BaseModel):
     raw_payload: str
     received_at: datetime  # quando nós recebemos/ingerimos
     transaction_type: str | None = None  # "Compra" | "Aluguel" | None — resolvido na ingestão
+    listing_url: str | None = None  # URL pública do anúncio, quando o portal a envia

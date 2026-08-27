@@ -24,7 +24,7 @@ from fastapi.concurrency import run_in_threadpool
 from src.config import settings
 from src.db import insert_dead_letter, insert_lead
 from src.models import Lead, VrSyncLead
-from src.transform import build_clean, dfimoveis_operation
+from src.transform import build_clean, dfimoveis_operation, safe_dfimoveis_listing_url
 from src.trello import push_pending_leads
 
 router = APIRouter(prefix="/webhook", tags=["ingestão"])
@@ -81,9 +81,10 @@ async def receber_lead_dfimoveis(
 
     # Fase 1: resolve o tipo de operação (Compra/Aluguel) ANTES de montar o Lead, para
     # gravá-lo no PRÓPRIO INSERT — fechando a janela em que um push concorrente veria o
-    # lead com tipo NULL e cardaria no quadro fallback errado. Empírico: os payloads
-    # reais do DFImóveis NÃO trazem `transactionType`; `dfimoveis_operation` prefere esse
-    # campo quando existe e cai numa heurística sobre o `clientListingId` do CRM (aluguel).
+    # lead com tipo NULL e cardaria no quadro fallback errado. Até 2026-08 os payloads
+    # reais do DFImóveis NÃO traziam `transactionType`; hoje trazem (com o valor "SALE").
+    # `dfimoveis_operation` prefere esse campo quando existe e cai numa heurística sobre
+    # o `clientListingId` do CRM (aluguel) para os leads que não o tragam.
     # Best-effort: uma resolução que falhe não pode derrubar a ingestão (tipo fica None →
     # INSERT grava NULL).
     tipo = None
@@ -104,6 +105,10 @@ async def receber_lead_dfimoveis(
         raw_payload=json.dumps(payload, ensure_ascii=False),
         received_at=received_at,
         transaction_type=tipo,
+        # Validação da URL na BORDA: um só ponto de confiança. O que não passa vira
+        # None e o card cai no comportamento antigo (mostrar o código do anúncio). A
+        # string original continua no raw_payload, então nada se perde.
+        listing_url=safe_dfimoveis_listing_url(vrsync.listing_url),
     )
 
     inserted = await run_in_threadpool(insert_lead, lead)

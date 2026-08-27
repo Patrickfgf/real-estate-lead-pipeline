@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS leads_raw (
     raw_payload     VARCHAR,
     received_at     TIMESTAMPTZ,
     transaction_type VARCHAR,
+    listing_url     VARCHAR,
     trello_card_id  VARCHAR,
     PRIMARY KEY (source, external_id)
 );
@@ -60,6 +61,7 @@ _LEAD_COLS = [
     "advertiser_code",
     "agency_code",
     "transaction_type",
+    "listing_url",
     "lead_date",
     "received_at",
 ]
@@ -77,6 +79,9 @@ def get_connection() -> duckdb.DuckDBPyConnection:
         # coluna `transaction_type`. `ADD COLUMN IF NOT EXISTS` é no-op num banco novo
         # (o _SCHEMA já a cria) e adiciona a coluna nos antigos — sem apagar dados.
         _con.execute("ALTER TABLE leads_raw ADD COLUMN IF NOT EXISTS transaction_type VARCHAR")
+        # Idem para `listing_url`: bancos anteriores a 2026-08 não têm a coluna (a URL do
+        # anúncio que a DFImóveis passou a enviar no webhook).
+        _con.execute("ALTER TABLE leads_raw ADD COLUMN IF NOT EXISTS listing_url VARCHAR")
     return _con
 
 
@@ -118,8 +123,8 @@ def insert_lead(lead: Lead) -> bool:
             INSERT INTO leads_raw
                 (source, external_id, name, email, phone, message, listing_ref,
                  advertiser_code, agency_code, cpf, lead_date, raw_payload, received_at,
-                 transaction_type)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 transaction_type, listing_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (source, external_id) DO NOTHING
             RETURNING external_id;
             """,
@@ -138,6 +143,7 @@ def insert_lead(lead: Lead) -> bool:
                 lead.raw_payload,
                 lead.received_at,
                 lead.transaction_type,
+                lead.listing_url,
             ],
         ).fetchone()
     return row is not None

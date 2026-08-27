@@ -21,8 +21,9 @@ CREATE TABLE leads_raw (
 );
 """
 
-# A MESMA instrução que get_connection() aplica em src/db.py (mantê-las em sincronia).
+# As MESMAS instruções que get_connection() aplica em src/db.py (mantê-las em sincronia).
 _MIGRATION = "ALTER TABLE leads_raw ADD COLUMN IF NOT EXISTS transaction_type VARCHAR"
+_MIGRATION_LISTING_URL = "ALTER TABLE leads_raw ADD COLUMN IF NOT EXISTS listing_url VARCHAR"
 
 
 def _columns(con) -> list[str]:
@@ -56,6 +57,32 @@ def test_migracao_adiciona_coluna_preservando_dados(tmp_path):
     assert "transaction_type" in _columns(con)
     row = con.execute(
         "SELECT name, transaction_type FROM leads_raw WHERE external_id = 'lead-antigo'"
+    ).fetchone()
+    con.close()
+    assert row == ("Cliente Antigo", None)
+
+
+def test_migracao_adiciona_listing_url_preservando_dados(tmp_path):
+    """Bancos anteriores a 2026-08 não têm `listing_url` (a URL do anúncio que a
+    DFImóveis passou a enviar). Mesma garantia da migração de transaction_type."""
+    db_path = str(tmp_path / "pre_listing_url.duckdb")
+
+    con = duckdb.connect(db_path)
+    con.execute(_SCHEMA_PRE_FASE1)
+    con.execute(
+        "INSERT INTO leads_raw (source, external_id, name) VALUES (?, ?, ?)",
+        ["dfimoveis", "lead-sem-url", "Cliente Antigo"],
+    )
+    assert "listing_url" not in _columns(con)
+    con.close()
+
+    con = duckdb.connect(db_path)
+    con.execute(_MIGRATION_LISTING_URL)
+    con.execute(_MIGRATION_LISTING_URL)  # idempotente
+
+    assert "listing_url" in _columns(con)
+    row = con.execute(
+        "SELECT name, listing_url FROM leads_raw WHERE external_id = 'lead-sem-url'"
     ).fetchone()
     con.close()
     assert row == ("Cliente Antigo", None)

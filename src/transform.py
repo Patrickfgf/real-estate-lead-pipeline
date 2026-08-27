@@ -17,6 +17,8 @@ CLI:
 import json
 import re
 import sys
+import unicodedata
+from urllib.parse import urlparse
 
 import pandas as pd
 
@@ -161,7 +163,16 @@ def uf_to_regiao(uf: str | None) -> str | None:
 # ---------------------------------------------------------------------------
 # Extração de campos do payload cru (JSON semi-estruturado)
 # ---------------------------------------------------------------------------
-_TX_PT = {"SELL": "Compra", "RENT": "Aluguel"}
+# Vocabulário do transactionType. SELL/RENT é o que a doc oficial do GrupoZAP
+# documenta; SALE/RENTAL entram por TOLERÂNCIA — em 2026-08 a DFImóveis passou a
+# mandar "SALE" nos leads. Aceitar um sinônimo a mais nunca classifica errado: só
+# resolve um caso que cairia em None e mandaria o lead pro quadro de fallback.
+_TX_PT = {
+    "SELL": "Compra",
+    "SALE": "Compra",
+    "RENT": "Aluguel",
+    "RENTAL": "Aluguel",
+}
 # Planos de publicação do Wimóveis que indicam anúncio em posição de destaque.
 _DESTAQUE = {"DESTAQUE", "DESTACADO", "SUPER_DESTAQUE", "SUPERDESTAQUE", "TRIPLE", "PREMIUM", "TOP"}
 # Heurística do CRM (DFImóveis): "al" seguido de dígito ("al0001") marca aluguel.
@@ -181,7 +192,7 @@ def _as_dict(raw_payload: str | dict | None) -> dict:
 def extract_extras(raw_payload: str | dict | None) -> dict:
     """Garimpa o `raw_payload` por campos úteis que não estão no lead canônico.
 
-    - `transaction_type`: VrSync `transactionType` (SELL/RENT) → Compra/Aluguel
+    - `transaction_type`: VrSync `transactionType` → Compra/Aluguel (ver `_TX_PT`)
     - `portal_temperature`: VrSync `temperature` (Baixa/Média/Alta) — sinal de scoring
     - `lead_origin`: VrSync `leadOrigin` (ex.: "Grupo OLX")
     - `is_destaque`: Wimóveis `planoDePublicacao` em posição premium
@@ -200,9 +211,11 @@ def extract_extras(raw_payload: str | dict | None) -> dict:
 def dfimoveis_operation(payload: str | dict | None) -> str | None:
     """Resolve o tipo de operação (Compra/Aluguel) de um lead do DFImóveis.
 
-    Empírico: os payloads reais do DFImóveis NÃO trazem `transactionType` (0 de
-    101 leads em produção). O único sinal de aluguel é o `clientListingId` (código
-    do CRM da corretora). Por isso:
+    Histórico: até 2026-08 os payloads reais do DFImóveis NÃO traziam
+    `transactionType` (0 de 101 leads em produção) — o único sinal de aluguel era o
+    `clientListingId` (código do CRM da corretora). Desde o ajuste de 2026-08 o campo
+    passou a vir, mas com o valor "SALE" em vez do "SELL" da doc (ver `_TX_PT`). O
+    fallback continua valendo para os leads antigos e para quem não mandar o campo:
 
     1. Preferência: se o payload traz `transactionType`, usa a mesma tradução do
        `extract_extras` (SELL→Compra, RENT→Aluguel).
@@ -224,11 +237,13 @@ def dfimoveis_operation(payload: str | dict | None) -> str | None:
 # ---------------------------------------------------------------------------
 # Link público do anúncio (por portal)
 # ---------------------------------------------------------------------------
-# O número no fim da URL canônica é o id do anúncio na plataforma. No Wimóveis
-# (Navent) esse id é o idnavplat, que guardamos como listing_ref quando a corretora
-# não associou um código próprio. O DFImóveis usa um id interno que NÃO vem no
-# webhook (só originListingId/clientListingId), então fica sem link até confirmarmos
-# a fonte (DetailViewUrl do feed VrSync ou um campo do payload do DFImóveis).
+# Dois caminhos distintos, de propósito:
+# - Wimóveis: a URL é CONSTRUÍDA por nós (`listing_url`) a partir do idnavplat, que
+#   guardamos como listing_ref quando a corretora não associou um código próprio.
+# - DFImóveis: a URL CHEGA PRONTA no payload (campo `listingUrl`, adicionado por eles
+#   em 2026-08) e passa por `safe_dfimoveis_listing_url`. Não dá para construí-la do
+#   listing_ref: esse guarda o clientListingId (código do CRM, ex. "Plano500"), e quem
+#   compõe a URL pública é o originListingId — identificadores diferentes por design.
 _WIMOVEIS_LISTING_URL = "https://www.wimoveis.com.br/propriedades/imovel-{id}.html"
 
 
@@ -247,6 +262,56 @@ def listing_url(source: str, listing_ref: str | None) -> str | None:
     if source == "wimoveis" and re.fullmatch(r"[0-9]+", ref):
         return _WIMOVEIS_LISTING_URL.format(id=ref)
     return None
+
+
+# Domínio do portal. O host tem que ser EXATAMENTE ele ou um subdomínio — comparar
+# com `in`/`endswith("dfimoveis.com.br")` aceitaria "dfimoveis.com.br.golpe.tld".
+_DFIMOVEIS_HOST = "dfimoveis.com.br"
+# Teto de tamanho: a URL vai para a descrição do card; uma URL gigante só serve para
+# poluir. As reais têm ~35 (curta /meta/<id>) a ~120 caracteres (com slug).
+_MAX_URL_LEN = 300
+
+
+def safe_dfimoveis_listing_url(raw: object) -> str | None:
+    """Valida a URL do anúncio que vem DENTRO do payload da DFImóveis.
+
+    Diferente de `listing_url`, que CONSTRÓI a URL a partir de um template nosso, aqui
+    a string chega de fora e vira link clicável no card do corretor. Então é input não
+    confiável: exigimos https, host do próprio portal, sem caracteres de controle
+    (um \n forjaria linhas falsas na descrição do card) e com tamanho limitado.
+
+    Retorna a URL limpa, ou None quando não passa — o chamador cai no comportamento
+    antigo (mostrar só o código do anúncio), nunca num link duvidoso.
+    """
+    if not isinstance(raw, str):
+        return None
+    url = raw.strip()
+    if not url or len(url) > _MAX_URL_LEN:
+        return None
+    # Controles e separadores invisíveis não existem em URL legítima do portal e são o
+    # vetor de injeção na descrição em markdown do card. Cc cobre C0/C1 (\n, \r, NUL,
+    # DEL); Cf cobre os controles bidi (RLO/LRO, que invertem visualmente o path e
+    # disfarçam o destino); Zl/Zp cobrem U+2028/U+2029, tratados como quebra de linha
+    # por várias camadas a jusante.
+    if any(unicodedata.category(c) in {"Cc", "Cf", "Zl", "Zp"} for c in url):
+        return None
+    # A barra invertida não é válida em autoridade pela RFC 3986 (que o urlparse segue),
+    # mas o WHATWG — a regra que os NAVEGADORES usam — normaliza "\\" para "/" ANTES de
+    # separar o host. Logo "https://evil.tld\\@www.dfimoveis.com.br/x" tem host
+    # "www.dfimoveis.com.br" para o urlparse e "evil.tld" para o Chrome: validaríamos um
+    # host e o corretor visitaria outro. Divergência de parser = bypass da allowlist.
+    if "\\" in url:
+        return None
+    try:
+        parts = urlparse(url)
+    except ValueError:
+        return None
+    if parts.scheme != "https":  # barra http://, javascript:, data: e URL sem esquema
+        return None
+    host = (parts.hostname or "").lower()
+    if host != _DFIMOVEIS_HOST and not host.endswith("." + _DFIMOVEIS_HOST):
+        return None
+    return url
 
 
 # ---------------------------------------------------------------------------
